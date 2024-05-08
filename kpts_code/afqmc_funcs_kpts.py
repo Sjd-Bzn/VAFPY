@@ -21,21 +21,21 @@ from afqmc_alpha import expr_exch_new_new
 '''
 @dataclass
 class HAMILTONIAN:
-    one_body: np.complex64
-    two_body: np.complex64
+    one_body: np.complex64   ## H_1 = sum(k) sum(pq) h(pq)(k) * a(dagger(p)(k)) * a(q)(k)  ## H_1 = np.sum((np.sum(t(pq)* np.matmul(adagger, a)))  ##adagger = np.conj(a).T 
+    two_body: np.complex64   ## H_2 = 1/2 sum(q, G) L(qG) * L(dagger)(qG)   ## L(qG) = np.sqrt(4*np.pi)/np.abs(G-q) * np.sum(np.sum( rho(prkr(q, G)) * np.matmul(np.conj(a).T(pk_r +q), a(rk_r))
 
 @dataclass
 class HAMILTONIAN_MF:
-    zero_body: np.complex64
-    one_body: np.complex64
-    two_body_e: np.complex64
-    two_body_o: np.complex64
+    zero_body: np.complex64   ## Nuclei repulsion  H_0 = np.sum (Z(a). Z(b)/np.abs(R(a) - R(b))) 
+    one_body: np.complex64    ## Kinetic and coulomb attarction  H_1 = (-1/2) np.sum(np.gradient(np.gradient(psi, r), r) H_1 = -np.sum(np.sum(Z(a)/np.abs((r(i) - R(a)))))  
+    two_body_e: np.complex64  ## electron repulsion      H_2 = np.sum(1/np.abs(r(i)- r(j)))
+    two_body_o: np.complex64  ## ?
 
 @dataclass
 class WALKERS:
-    mats_up = np.array(NUM_WALKERS * [PSI_T_up], dtype=np.complex128)
+    mats_up = np.array(NUM_WALKERS * [PSI_T_up], dtype=np.complex128)   ### spinn up and down
     mats_down = np.array(NUM_WALKERS * [PSI_T_down], dtype=np.complex128)
-    weights = np.ones(NUM_WALKERS, dtype=np.complex128)
+    weights = np.ones(NUM_WALKERS, dtype=np.complex128)   ## initiate by PSI_I from DFT calculation which at first has weight = 1 and phase = 0  
 
 def show_params():
     print('system = ', system)
