@@ -29,7 +29,7 @@ class HAMILTONIAN_MF:
     zero_body: np.complex64   ## Nuclei repulsion  H_0 = np.sum (Z(a). Z(b)/np.abs(R(a) - R(b))) 
     one_body: np.complex64    ## Kinetic and coulomb attarction  H_1 = (-1/2) np.sum(np.gradient(np.gradient(psi, r), r) H_1 = -np.sum(np.sum(Z(a)/np.abs((r(i) - R(a)))))  
     two_body_e: np.complex64  ## electron repulsion      H_2 = np.sum(1/np.abs(r(i)- r(j)))
-    two_body_o: np.complex64  ## ?
+    two_body_o: np.complex64  ## ...
 
 @dataclass
 class WALKERS:
