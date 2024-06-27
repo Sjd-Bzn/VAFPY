@@ -369,43 +369,38 @@ if first_cpu:
    print()
 
 # Output to the additional file
-E_gs = "test.txt"
-with open(E_gs, 'w') as gs_file:
-    if first_cpu:
-        gs_file.write("\nCalculating ground state energy...\n\n")
-        gs_file.write(f'E_gs_afqmc = {np.mean(data[st:en])} ± {np.sqrt(max(a[1]))}\n')
-        gs_file.write(f'Block mean = {a[2]}\n')
-        gs_file.write(f'Block size = {a[0]}\n')
-        gs_file.write(f'Variance = {a[1]}\n')
-
-if first_cpu:
+#E_gs = "test.txt"
+#with open(E_gs, 'w') as gs_file:
+#    if first_cpu:
+#        gs_file.write("\nCalculating ground state energy...\n\n")
+#        gs_file.write(f'E_gs_afqmc = {np.mean(data[st:en])} ± {np.sqrt(max(a[1]))}\n')
+#        gs_file.write(f'Block mean = {a[2]}\n')
+#        gs_file.write(f'Block size = {a[0]}\n')
+#        gs_file.write(f'Variance = {a[1]}\n')
+#
+#if first_cpu:
    print()
 
-v, blockVar, blockMean = blockAverage(data[st:en])
-import matplotlib.pyplot as plt
+#v, blockVar, blockMean = blockAverage(data[st:en])
+#import matplotlib.pyplot as plt
 
-
-
-plt.figure(figsize=(14, 6))
-s= np.sqrt(blockVar)
-# Plot block variance
-plt.subplot(1, 2, 1)
-plt.plot(v, s, label='Block Variance')
-plt.title('Block Variance vs. Block Size')
-plt.xlabel('Block Size')
-plt.ylabel('Variance')
-plt.legend()
-
-plt.subplot(1,2,3)
-plt.plot()
-
-# Plot block mean
-plt.subplot(1, 2, 2)
-plt.plot(v, blockMean, label='Block Mean', color='orange')
-plt.title('Block Mean vs. Block Size')
-plt.xlabel('Block Size')
-plt.ylabel('Mean')
-plt.legend()
-
-plt.tight_layout()
-plt.show()
+#plt.figure(figsize=(14, 6))
+#s= np.sqrt(blockVar)
+## Plot block variance
+#plt.subplot(1, 2, 1)
+#plt.plot(v, s, label='Block Variance')
+#plt.title('Block Variance vs. Block Size')
+#plt.xlabel('Block Size')
+#plt.ylabel('Variance')
+#plt.legend()
+#
+## Plot block mean
+#plt.subplot(1, 2, 2)
+#plt.plot(v, blockMean, label='Block Mean', color='orange')
+#plt.title('Block Mean vs. Block Size')
+#plt.xlabel('Block Size')
+#plt.ylabel('Mean')
+#plt.legend()
+#
+#plt.tight_layout()
+#plt.show()

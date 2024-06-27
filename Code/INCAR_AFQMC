@@ -2,6 +2,8 @@
       
       System Properties:
       NGVEC    : 170
+      NEUP     : 5
+      NEDOWN   : 5
       NORB     : 24
       EHZB     : -142.09249198310414
       ECONST   : 9.20490701

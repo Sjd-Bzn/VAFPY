@@ -10,9 +10,9 @@ system = inputs.get('SYSTEM', 'Autorun')
 
 num_g =     inputs["NGVEC"]                                   ### from the out put file of the HF in H2 part
 
-num_electrons_up = 5
+num_electrons_up = inputs['NEUP']
 
-num_electrons_down = 5
+num_electrons_down = inputs['NEDOWN']
 
 num_orb =inputs["NORB"]                                             ##### from the H1.npy or H2.npy
 
