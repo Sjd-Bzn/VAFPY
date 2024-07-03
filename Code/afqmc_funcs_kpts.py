@@ -55,6 +55,7 @@ def show_params():
     print('D_TAU = ', D_TAU)
     print('NUM_WALKERS = ', NUM_WALKERS)
     print('NUM_STEPS = ', NUM_STEPS)
+    print('Block_Divisor', block_divisor)
     print('UPDATE_METHOD = ', UPDATE_METHOD)
     print('REORTHO_PERIODICITY = ', REORTHO_PERIODICITY)
     print('REBAL_PERIODICITY = ', REBAL_PERIODICITY)
@@ -491,8 +492,9 @@ def init_walkers_weights(n_walkers):
 
 def blockAverage(datastream):
     Nobs = len(datastream)
+    N = block_divisor
     minBlockSize = 1;
-    maxBlockSize = int(Nobs/2);
+    maxBlockSize = int(Nobs/N);
     NumBlocks = maxBlockSize - minBlockSize
     blockMean = np.zeros(NumBlocks)
     blockVar = np.zeros(NumBlocks)

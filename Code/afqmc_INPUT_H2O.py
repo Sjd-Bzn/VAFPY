@@ -14,6 +14,8 @@ num_electrons_up = inputs['NEUP']
 
 num_electrons_down = inputs['NEDOWN']
 
+block_divisor = inputs['BLKDIV']
+
 num_orb =inputs["NORB"]                                             ##### from the H1.npy or H2.npy
 
 H_zero = inputs.get("EHZB", 0) 
