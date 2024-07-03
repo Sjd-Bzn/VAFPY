@@ -8,13 +8,13 @@ with open ("INCAR_AFQMC", "r") as f:
 system = inputs.get('SYSTEM', 'Autorun')
 
 
-num_g =     inputs["NGVEC"]                                   ### from the out put file of the HF in H2 part
+num_g =  inputs["NGVEC"]                                   ### from the out put file of the HF in H2 part
 
 num_electrons_up = inputs['NEUP']
 
 num_electrons_down = inputs['NEDOWN']
 
-block_divisor = inputs['BLKDIV']
+block_divisor = inputs.get('BLKDIV', 10)
 
 num_orb =inputs["NORB"]                                             ##### from the H1.npy or H2.npy
 
@@ -81,24 +81,31 @@ if HF_TEST==True:
 
 num_k =inputs.get("KPOINT", 1)                                               #### closed or open shell
 
-if num_k==8:
-    fsg = 8.08288908510240 
-    input_file_one_body_hamil = 'H1.npy'
-    input_file_two_body_hamil = 'H2.npy'
-    h_en_vasp = 24.58880813
-    ex_en_vasp = -87.45880075
-    Ec_MP2_vasp = -2.61184550
-    q_list = 'Q_list.npy'
+fsg = inputes.get("FSG", 0)
 
-if num_k==1:
-    fsg = 0.0
-    input_file_one_body_hamil = 'H1.npy'
-    input_file_two_body_hamil = 'H2.npy'
-    h_en_vasp = 0.0
-    ex_en_vasp = 0.0
-    Ec_MP2_vasp = 0.0
-    q_list = 'Q_list.npy'
-    
+input_file_one_body_hamil = 'H1.npy'
+input_file_two_body_hamil = 'H2.npy'
+q_list = 'Q_list.npy'
+
+
+#if num_k==8:
+#    fsg = 8.08288908510240 
+#    input_file_one_body_hamil = 'H1.npy'
+#    input_file_two_body_hamil = 'H2.npy'
+#    h_en_vasp = 24.58880813
+#    ex_en_vasp = -87.45880075
+#    Ec_MP2_vasp = -2.61184550
+#    q_list = 'Q_list.npy'
+#
+#if num_k==1:
+#    fsg = 0.0
+#    input_file_one_body_hamil = 'H1.npy'
+#    input_file_two_body_hamil = 'H2.npy'
+#    h_en_vasp = 0.0
+#    ex_en_vasp = 0.0
+#    Ec_MP2_vasp = 0.0
+#    q_list = 'Q_list.npy'
+#    
 
 
 PSI_T_up_0 = PSI_T_down_0 = np.eye(num_orb)[:,0:num_electrons_up]
@@ -118,5 +125,3 @@ if SPIN==0:
     
 elif SPIN==1:
     output_file = 'AFQMC_SP_num_k'+str(num_k)+'_'+system+'_'+str(UPDATE_METHOD)+'_Reortho_'+str(REORTHO_PERIODICITY) +'_Rebal_'+str(REBAL_PERIODICITY)+'_TAU_'+str(D_TAU)+'.txt'
-
-
