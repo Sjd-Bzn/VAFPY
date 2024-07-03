@@ -1,0 +1,36 @@
+      SYSTEM   : H2O
+      
+      System Properties:
+      NGVEC    : 170
+      NEUP     : 5
+      NEDOWN   : 5
+      NORB     : 24
+      EHZB     : -142.09249198310414
+      ECONST   : 9.20490701
+      SPIN     : 0
+
+      CONTROL PARAMETER FOR THIS RUN: 
+      EQLB     : 0.1
+      DTAU     : 0.005 
+      NWAK     : 256           
+      NSTP     : 1000  
+      BLKDIV   : 10
+      KPOINT   : 1
+      TMAX     : 184800
+      OTEY     : 6
+      TIMG     : 2000
+      TREL     : 2000
+                     
+      METHOD IMPLEMENTATION:
+      UPDTM    : H               
+      REOPRI   : 1
+      REBPRI   : 5
+      SMFRQ    : 1
+      CHPRI    : 1000
+
+      SINGULAR VALUE DECOMPOSITION and HATREE-FOCK:
+      SVD      : False
+      SVDT     : 1e-3
+      HF       : False
+      HFTAU    : 1.0e-10
+      HFSTP    : 1   
