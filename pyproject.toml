@@ -1,0 +1,14 @@
+[project]
+name = "afqmc"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Martin Schlipf", email = "martin.schlipf@gmail.com"},
+]
+dependencies = []
+requires-python = ">=3.12"
+readme = "README.md"
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
