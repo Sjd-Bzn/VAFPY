@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from opt_einsum import contract_expression
+import numpy as np
 import numpy.typing as npt
 
 
@@ -8,6 +9,7 @@ class Constants:
     L: npt.ArrayLike
     number_electron: int
     number_walker: int
+    tau: float
 
     @property
     def number_orbital(self):
@@ -39,6 +41,7 @@ class Propagator:
         self._get_force_bias = contract_expression(
             "wij,jig->wg", constants.shape_slater_det, constants.L_trial, constants=[1]
         )
+        self._sqrt_tau = np.sqrt(constants.tau)
 
     def new_auxiliary_field(self, force_bias):
         if force_bias is None:
@@ -48,7 +51,7 @@ class Propagator:
         return self._get_auxiliary_field(x)
 
     def force_bias(self, slater_det):
-        return self._get_force_bias(slater_det)
+        return -2j * self._sqrt_tau * self._get_force_bias(slater_det)
 
     def random_normal(self):
         pass
