@@ -6,7 +6,7 @@ from afqmc import field, propagate
 from afqmc.constants import Constants
 
 
-def test_propagate():
+def test_propagate_taylor():
     num_g = 13
     num_orbital = 6
     num_electron = 3
@@ -18,8 +18,7 @@ def test_propagate():
     slater_det = np.random.random(constants.shape_slater_det).astype(np.complex_)
     auxiliary_field = field.auxiliary(constants, force_bias=None)
     potential = field.potential(constants, auxiliary_field)
-    actual = propagate.taylor(constants ,potential, slater_det)
+    actual = propagate.taylor(constants, potential, slater_det)
     potential = np.moveaxis(potential, -1, 0)
     expected = np.einsum("wij,wjk->wik", expm(potential), slater_det)
     npt.assert_allclose(actual, expected)
-

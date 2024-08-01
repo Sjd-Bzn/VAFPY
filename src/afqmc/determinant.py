@@ -18,3 +18,8 @@ def biorthogonolize(constants, slater_det):
     overlap = project_trial(constants, slater_det)
     inv_overlap = np.linalg.inv(overlap)
     return contract("wij,wjk->wik", slater_det, inv_overlap)
+
+
+def overlap_trial(constants, slater_det):
+    overlap = project_trial(constants, slater_det)
+    return np.linalg.det(overlap)
