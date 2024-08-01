@@ -16,11 +16,11 @@ def test_create_auxiliary_field_without_force_bias():
     L = np.random.random((num_orbital, num_orbital, num_g))
     constants = Constants(L, num_electron, num_walker, num_k, tau)
     propagator = Propagator(constants)
-    x = np.random.normal(size=(num_g, num_walker))
+    x = np.random.normal(size=constants.shape_field)
     with patch.object(propagator, "random_field", return_value=x) as mock:
-        auxiliary_field = propagator.new_auxiliary_field(force_bias=None)
+        auxiliary_field = propagator.auxiliary_field(force_bias=None)
         mock.assert_called_once_with()
-    npt.assert_allclose(auxiliary_field, 1j * np.sqrt(tau) * L @ x)
+    npt.assert_allclose(auxiliary_field, x)
 
 
 def test_create_auxiliary_field_with_force_bias():
@@ -33,12 +33,12 @@ def test_create_auxiliary_field_with_force_bias():
     L = np.random.random((num_orbital, num_orbital, num_g))
     constants = Constants(L, num_electron, num_walker, num_k, tau)
     propagator = Propagator(constants)
-    x = np.random.normal(size=(num_g, num_walker))
-    force_bias = np.random.random((num_g, num_walker))
+    x = np.random.normal(size=constants.shape_field)
+    force_bias = np.random.random(constants.shape_field)
     with patch.object(propagator, "random_field", return_value=x) as mock:
-        auxiliary_field = propagator.new_auxiliary_field(force_bias)
+        auxiliary_field = propagator.auxiliary_field(force_bias)
         mock.assert_called_once_with()
-    npt.assert_allclose(auxiliary_field, 1j * np.sqrt(tau) * L @ (x - force_bias))
+    npt.assert_allclose(auxiliary_field, x - force_bias)
 
 
 def test_force_bias():
@@ -55,8 +55,25 @@ def test_force_bias():
     propagator = Propagator(constants)
     force_bias = propagator.force_bias(slater_det)
     L_trial = L[:num_electron]
-    expected = -2j * np.sqrt(tau) * np.einsum("wij,jig->wg", slater_det, L_trial)
+    expected = -2j * np.sqrt(tau) * np.einsum("wij,jig->gw", slater_det, L_trial)
     npt.assert_allclose(force_bias, expected)
+
+
+def test_potential():
+    num_g = 19
+    num_orbital = 4
+    num_electron = 2
+    num_walker = 8
+    num_k = 1
+    tau = 2e-3
+    L = np.random.random((num_orbital, num_orbital, num_g))
+    constants = Constants(L, num_electron, num_walker, num_k, tau)
+    slater_det = np.random.random(constants.shape_slater_det)
+    propagator = Propagator(constants)
+    force_bias = propagator.force_bias(slater_det)
+    auxiliary_field = propagator.auxiliary_field(force_bias)
+    potential = propagator.potential(auxiliary_field)
+    npt.assert_allclose(potential, 1j * np.sqrt(tau) * L @ auxiliary_field)
 
 
 def test_propagate():
@@ -69,9 +86,30 @@ def test_propagate():
     L = np.random.random((num_orbital, num_orbital, num_g))
     constants = Constants(L, num_electron, num_walker, num_k, tau)
     propagator = Propagator(constants)
-    aux_field = propagator.new_auxiliary_field(force_bias=None)
     slater_det = np.random.random(constants.shape_slater_det).astype(np.complex_)
-    actual = propagator.propagate(aux_field, slater_det)
-    aux_field = np.moveaxis(aux_field, -1, 0)
-    expected = np.einsum("wij,wjk->wik", expm(aux_field), slater_det)
+    auxiliary_field = propagator.auxiliary_field(force_bias=None)
+    potential = propagator.potential(auxiliary_field)
+    actual = propagator.propagate(potential, slater_det)
+    potential = np.moveaxis(potential, -1, 0)
+    expected = np.einsum("wij,wjk->wik", expm(potential), slater_det)
     npt.assert_allclose(actual, expected)
+
+
+def test_importance_sampling():
+    num_g = 17
+    num_orbital = 4
+    num_electron = 1
+    num_walker = 5
+    num_k = 1
+    tau = 1e-4
+    L = np.random.random((num_orbital, num_orbital, num_g))
+    constants = Constants(L, num_electron, num_walker, num_k, tau)
+    propagator = Propagator(constants)
+    slater_det = np.random.random(constants.shape_slater_det)
+    x = np.random.normal(size=constants.shape_field)
+    force_bias = propagator.force_bias(slater_det)
+    with patch.object(propagator, "random_field", return_value=x):
+        auxiliary_field = propagator.auxiliary_field(force_bias)
+    importance_sampling = propagator.importance_sampling(auxiliary_field, force_bias)
+    arg = np.einsum("gw->w", x * force_bias - 0.5 * force_bias * force_bias)
+    npt.assert_allclose(importance_sampling, np.exp(arg))
