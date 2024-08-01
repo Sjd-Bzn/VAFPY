@@ -18,7 +18,10 @@ def make_constants():
             "tau": random.uniform(1e-4, 1e-3),
         }
         options = {**default_options, **user_options}
+        H1 = np.random.random((options["number_k"], number_orbital, number_orbital))
+        H1T = np.moveaxis(H1, 1, -1)
+        H1 = 0.5 * (H1 + H1T)  # make Hermitian
         L = np.random.random((number_orbital, number_orbital, number_g))
-        return Constants(L, **options)
+        return Constants(H1, L, **options)
 
     return inner

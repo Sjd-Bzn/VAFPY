@@ -3,10 +3,12 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 from opt_einsum import contract_expression
+from scipy.linalg import expm
 
 
 @dataclass
 class Constants:
+    H1: npt.ArrayLike
     L: npt.ArrayLike
     number_electron: int
     number_walker: int
@@ -39,6 +41,10 @@ class Constants:
         "L projected on a trial determinant"
         return self.L[: self.number_electron]
 
+    @property
+    def exp_H1_half(self):
+        return self._exp_H1_half
+
     def __post_init__(self):
         self._get_potential = contract_expression(
             "ijg,gw->ijw", self.L, self.shape_field, constants=[0]
@@ -46,3 +52,4 @@ class Constants:
         self._get_force_bias = contract_expression(
             "wij,jig->gw", self.shape_slater_det, self.L_trial, constants=[1]
         )
+        self._exp_H1_half = expm(-0.5 * self.tau * self.H1)

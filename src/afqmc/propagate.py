@@ -8,3 +8,9 @@ def taylor(constants, potential, slater_det):
         addend = contract("ijw,wjk->wik", potential, addend) / (j + 1)
         result += addend
     return result
+
+
+def s2(constants, potential, slater_det):
+    slater_det = constants.exp_H1_half @ slater_det
+    slater_det = taylor(constants, potential, slater_det)
+    return constants.exp_H1_half @ slater_det
