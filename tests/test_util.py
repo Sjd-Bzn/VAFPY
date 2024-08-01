@@ -1,7 +1,8 @@
 import numpy as np
 import numpy.testing as npt
+
+from afqmc import determinant
 from afqmc.constants import Constants
-from afqmc.util import biorthogonolize
 
 
 def test_biorthogonalize():
@@ -19,7 +20,7 @@ def test_biorthogonalize():
     for walker in slater_det:
         expected.append(theta(trial, walker))
     expected = np.array(expected)
-    actual = biorthogonolize(constants, slater_det)
+    actual = determinant.biorthogonolize(constants, slater_det)
     npt.assert_allclose(expected, actual)
 
 
