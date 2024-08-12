@@ -1,3 +1,7 @@
+from mpi4py import MPI
+if MPI.COMM_WORLD.Get_rank() != 0:
+    print = lambda *arg, **kwargs: None
+
 import numpy as np
 from dataclasses import dataclass
 from afqmc_INPUT_H2O import *
@@ -269,6 +273,7 @@ print('even odd done')
 #expr_hart = contract_expression('Nri,qirG,Npj,qjpG->N',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),ALPHA_FULL,(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),ALPHA_FULL_T,constants=[1,3],optimize='greedy')
 #st_time=time()
 #expr_hart_new = contract_expression('Nri,Npj,irjp->N',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),ALPHAs_MUL,constants=[2],optimize='greedy')
+#expr_hart_new_new = contract_expression('Nri,irG,Npj,jpG->N',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp,(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp_t,constants=[1,3],optimize='greedy')
 #print('expr_hart_new time = ', time()-st_time)
 expr_h2_e = contract_expression('ijG,GN->ijN',hamil_MF.two_body_e,(num_g,NUM_WALKERS),constants=[0],optimize='greedy')
 expr_h2_o = contract_expression('ijG,GN->ijN',hamil_MF.two_body_o,(num_g,NUM_WALKERS),constants=[0],optimize='greedy')
@@ -277,12 +282,8 @@ expr_fb_o = contract_expression('Nri,irG->NG',(NUM_WALKERS,num_orb*num_k,num_ele
 
 expr_exch_new_new = contract_expression('Nri,jrG,Npj,ipG->N',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp,(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp_t,constants=[1,3],optimize='greedy')
 expr_hart_new_new = contract_expression('Nri,irG,Npj,jpG->N',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp,(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp_t,constants=[1,3],optimize='greedy')
-
-
-
+      
 #exp_f = contract_expression('Nri,qirG->NqG',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),ALPHA_FULL,constants=[1])
 #exp_ft = contract_expression('Nri,qirG->NqG',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),ALPHA_FULL_T,constants=[1])
-#expr_exch = contract_expression('Nri,jrG,Npj,ipG->N', (NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k), (num_electrons_up*num_k,num_orb*num_k,num_g),(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),(num_electrons_up*num_k,num_orb*num_k,num_g))#,optimize='greedy')
+#expr_exch = contract_expression('Nri,jrG,Npj,ipG->N', (NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k), (num_electrons_up*num_k,num_orb*num_k,),(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),(num_electrons_up*num_k,num_orb*num_k,num_g))#,optimize='greedy')
 #expr_exch_2 = contract_expression('Nri,qjrG,Npj,qipG->N',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),(num_k,num_electrons_up*num_k,num_orb*num_k,num_g),(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),(num_k,num_electrons_up*num_k,num_orb*num_k,num_g))
-
-

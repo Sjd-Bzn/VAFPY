@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.linalg import block_diag
-#from mpi4py import MPI
+from mpi4py import MPI
 import yaml 
 with open ("INCAR_AFQMC", "r") as f:
     inputs = yaml.safe_load(f)
@@ -38,9 +38,9 @@ NUM_WALKERS = inputs.get("NWAK", 256)
 
 NUM_STEPS =inputs.get("NSTP", 1000)
 
-#comm = MPI.COMM_WORLD
-#size = comm.Get_size()
-#NUM_WALKERS=NUM_WALKERS//size
+comm = MPI.COMM_WORLD
+size = comm.Get_size()
+NUM_WALKERS=NUM_WALKERS//size
 
 order_trunc =inputs.get("OTEY", 6)                                     ### exp_Taylor (matrics to ex)
 
@@ -50,7 +50,7 @@ trsh_real =inputs.get("TREL", 2000)
 
 
 
-first_cpu = True #comm.Get_rank()==0
+first_cpu =  comm.Get_rank()==0
 
 
 UPDATE_METHOD =inputs.get("UPDTM", "H")
@@ -81,7 +81,7 @@ if HF_TEST==True:
 
 num_k =inputs.get("KPOINT", 1)                                               #### closed or open shell
 
-fsg = inputes.get("FSG", 0)
+fsg = inputs.get("FSG", 0)
 
 input_file_one_body_hamil = 'H1.npy'
 input_file_two_body_hamil = 'H2.npy'

@@ -1,3 +1,7 @@
+from mpi4py import MPI
+if MPI.COMM_WORLD.Get_rank() != 0:
+    print = lambda *arg, **kwargs: None
+
 from afqmc_funcs_kpts import *
 #first_cpu = comm.Get_rank()==0
 from time import time
@@ -5,6 +9,8 @@ import sys
 from os.path import exists
 log_file = 'log'
 #sys.stdout = open(log_file, "w")
+
+
 
 if first_cpu:
     print('###########################')
@@ -54,6 +60,9 @@ if first_cpu:
     print()
     print('###########################')
     print('Rading Hamiltonian...')
+
+np.random.seed(15462)
+
 hamil = HAMILTONIAN
 h1 = np.array(read_datafile(input_file_one_body_hamil), order='C')
 #h1 = np.zeros_like(h1)
@@ -299,7 +308,13 @@ while (j<NUM_STEPS+1):
     #energy_new = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,hamil.two_body,h2_t,ql,m_q,ALPHA_FULL,ALPHA_FULL_T,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
     if j%SAMP_FREQ==0:
         energy_time_st = time()
+        
+        
         energy_new = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
+        
+        
+        
+        
         print('energy time = ', time()-energy_time_st)
         #t1=time()
         #energy_new_test = measure_E_gs_new(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)#alp,alp_t)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
@@ -369,16 +384,16 @@ if first_cpu:
    print()
 
 # Output to the additional file
-#E_gs = "test.txt"
-#with open(E_gs, 'w') as gs_file:
-#    if first_cpu:
-#        gs_file.write("\nCalculating ground state energy...\n\n")
-#        gs_file.write(f'E_gs_afqmc = {np.mean(data[st:en])} ± {np.sqrt(max(a[1]))}\n')
-#        gs_file.write(f'Block mean = {a[2]}\n')
-#        gs_file.write(f'Block size = {a[0]}\n')
-#        gs_file.write(f'Variance = {a[1]}\n')
-#
-#if first_cpu:
+E_gs = f"test_{comm.Get_size()}.txt"
+with open(E_gs, 'w') as gs_file:
+    if first_cpu:
+        gs_file.write("\nCalculating ground state energy...\n\n")
+        gs_file.write(f'E_gs_afqmc = {np.mean(data[st:en])} ± {np.sqrt(max(a[1]))}\n')
+        gs_file.write(f'Block mean = {a[2]}\n')
+        gs_file.write(f'Block size = {a[0]}\n')
+        gs_file.write(f'Variance = {a[1]}\n')
+
+if first_cpu:
    print()
 
 #v, blockVar, blockMean = blockAverage(data[st:en])

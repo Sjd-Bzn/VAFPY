@@ -1,3 +1,4 @@
+from mpi4py import MPI
 import numpy as np
 from time import time
 from dataclasses import dataclass
@@ -178,7 +179,7 @@ def gen_Ao_Qs_list(h2,q_listl):
     ao_Qs = ao_Qs.reshape([num_k,h2.shape[0],h2.shape[1],h2.shape[2]])
     return ao_Qs
 
-def get_alpha_k1_k2(trial_0,h2,k1_idx,k2_idx):
+def get_alpha_k1_k2(trial_0,h2,k1_idx,k2_idx):                                                               #####! it doesnt use mean field subtraction
     '''
     It returns alpha to be used as an intermediate object to compute one-body reduced density tensors.
     '''
@@ -257,8 +258,8 @@ def H_1_mf(trial_0,trial,h2,h2_dagger,q_list,h1):
     '''
     change = 1j*np.zeros_like(h1)
     for Q in range(1,num_k+1):
-        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q)
-        avg_A_vec_Q_dagger = avg_A_Q(trial_0,trial,h2_dagger,q_list,Q)
+        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q)                                                                      ####!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        avg_A_vec_Q_dagger = avg_A_Q(trial_0,trial,h2_dagger,q_list,Q)                                                        ####!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         K1s_K2s = get_k1s_k2s(q_list,Q)
         for K1,K2 in K1s_K2s:
             change[(K1-1)*num_orb:K1*num_orb,(K2-1)*num_orb:K2*num_orb] = np.einsum('rpG->rp',np.einsum('G,rpG->rpG',avg_A_vec_Q_dagger,h2[(K1-1)*num_orb:K1*num_orb,(K2-1)*num_orb:K2*num_orb,:])+np.einsum('G,rpG->rpG',avg_A_vec_Q,h2_dagger[(K1-1)*num_orb:K1*num_orb,(K2-1)*num_orb:K2*num_orb,:]))
@@ -276,6 +277,7 @@ def H_0_mf(trial_0,trial,h2,h2_dagger,q_list):
     return result
 
 #@profile
+first_call = True
 def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0):
     NG = num_g
     new_walker_mat = np.zeros_like(walker_mat)
@@ -284,16 +286,29 @@ def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0):
     for i in range(NUM_WALKERS):
         theta_mat.append(theta(trial, walker_mat[i]))
     theta_mat=np.array(theta_mat)
-    #fb_e_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, alpha_full_e,optimize='greedy')
+    #fb_e_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, _e,optimize='greedy')
     fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat) 
     #fb_o_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, alpha_full_o,optimize='greedy')
     fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat)
     x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
     x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+#    x_e_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(comm.Get_size(),NG,NUM_WALKERS)[comm.Get_rank()]
+#    x_o_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(comm.Get_size(),NG,NUM_WALKERS)[comm.Get_rank()]
+#    x_e_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(NG,NUM_WALKERS,comm.Get_size())[:,:,comm.Get_rank()]
+#    x_o_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(NG,NUM_WALKERS,comm.Get_size())[:,:,comm.Get_rank()]
+#    global first_call
+#    if first_call:
+#        first_call = False
+#    else:
+#        with open(f"size_{comm.Get_size()}_rank_{comm.Get_rank()}", "w") as f:
+#            for i in range(NUM_WALKERS):
+#                f.write(f"{comm.Get_size() * i + comm.Get_rank()} {x_e_Q[:,i]}\n")
+#        comm.barrier()
+#        exit()
     h_2 = expr_h2_e(x_e_Q-fb_e_Q.T)+expr_h2_o(x_o_Q-fb_o_Q.T)  
     #h_2 = h_mf.two_body_e@(x_e_Q-fb_e_Q.T) + h_mf.two_body_o@(x_o_Q-fb_o_Q.T)
     for i in range(0,NUM_WALKERS):
-        h=h_1+SQRT_DTAU*1j*h_2[:,:,i]
+        h=h_1+SQRT_DTAU*1j*h_2[:,:,i]                                                                                                         ### !!!!!!!!!!!!!!
         addend = walker_mat[i]
         for j in range(order_trunc+1):
             new_walker_mat[i] += addend
@@ -359,9 +374,9 @@ def measure_E_gs_old(trial,weights,walkers,h_1):#,comm):
     val=0
     for e_loc, weight in zip(e_locs, weights):
         val+=e_loc*weight
-    #comm.reduce(val)
+    comm.reduce(val)
     sum_w = np.sum(weights)
-    #comm.reduce(sum_w)
+    comm.reduce(sum_w)
     return val/sum_w
 
 #@profile
@@ -375,13 +390,24 @@ def measure_E_gs(trial,weights,walkers,h_1):#,alpha_full,alpha_full_t):#,comm):
     har_list  = 2*expr_hart_new_new(thetas,thetas)
     exch_list = expr_exch_new_new(thetas,thetas)
     e_locs=e1+har_list-exch_list
+#    with open(f"energy_size_{comm.Get_size()}_rank_{comm.Get_rank()}", "w") as f:
+#        for i, (e_loc, weight) in enumerate(zip(e_locs, weights)):
+#            f.write(f"{i} {e_loc} {weight / comm.Get_size()}\n")
+#    global first_call
+#    if not first_call:
+#        comm.barrier()
+#        exit()
+#    first_call = False
     val=0
     for e_loc, weight in zip(e_locs, weights):
-        val+=e_loc*weight
-    #comm.reduce(val)
-    sum_w = np.sum(weights)
-    #comm.reduce(sum_w)
+        val+=e_loc*weight/comm.Get_size()
+    comm.reduce(val)
+    sum_w = np.sum(weights/comm.Get_size())
+    comm.reduce(sum_w)
     return val/sum_w
+
+
+
 
 def propagator_fp(h_mf,h_1,d_tau,e_0):
     '''
@@ -444,16 +470,6 @@ def average_Hamil(h_mf, h_1, psi_up, walker, n_w, d_tau, e_0, n):
         avg += ((1-det_up)/d_tau/n).real
     avg = avg/n_w
     return avg
-
-def avg_A_Q_new(trial,h2,q_list,q_selected):
-    '''
-    It returns average of two-body Hamiltonian for a specified Q.
-    '''
-    theta_full = theta(trial, trial)
-    alpha_full = get_alpha_Q_full_mat(trial,h2,q_list,q_selected)
-    f_full = np.einsum('nrG,rm->nmG', alpha_full,theta_full)
-    tr_f = np.einsum('iiG->G',f_full)
-    return 2*tr_f
 
 
 def reortho_qr(walker_matrix):
