@@ -356,6 +356,13 @@ while (j<NUM_STEPS+1):
         rebalanced_weights_indices = rebalance_comb(walkers.weights)
         walkers.mats_up = walkers.mats_up[rebalanced_weights_indices]
         walkers.weights = init_walkers_weights(NUM_WALKERS)
+
+
+# Check if the simulation has exceeded the maximum runtime (TMAX)
+    if time() - start_time > MAX_RUN_TIME:
+        print(f"Simulation stopped early at step {step} due to reaching TMAX.")
+        break
+
 file_out.close()
     
 if first_cpu:
