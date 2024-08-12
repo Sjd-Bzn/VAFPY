@@ -321,6 +321,24 @@ def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0):
 def swap(a):
     return (a[1],a[0])
 
+#def gen_minus_q(q_list):
+#    qs=np.arange(1,num_k+1)
+#    minus_qs =[1]
+#    for q_selected in range (2,num_k+1):
+#        K1s_K2s = get_k1s_k2s(q_list,q_selected)
+#        for Q in range(2,num_k+1):
+#            K1s_K2s_comp = get_k1s_k2s(q_list,Q)
+#            flag = True
+#            for pair in K1s_K2s:
+#                if flag:
+#                    for pair_comp in K1s_K2s_comp:
+#                        if pair==swap(pair_comp):
+#                            flag=False
+#                            minus_qs.append(Q)
+#                            break
+#    return(np.array(minus_qs))
+
+
 def gen_minus_q(q_list):
     qs=np.arange(1,num_k+1)
     minus_qs =[1]
@@ -328,14 +346,9 @@ def gen_minus_q(q_list):
         K1s_K2s = get_k1s_k2s(q_list,q_selected)
         for Q in range(2,num_k+1):
             K1s_K2s_comp = get_k1s_k2s(q_list,Q)
-            flag = True
-            for pair in K1s_K2s:
-                if flag:
-                    for pair_comp in K1s_K2s_comp:
-                        if pair==swap(pair_comp):
-                            flag=False
-                            minus_qs.append(Q)
-                            break
+            if any(pair == swap(pair_comp) for pair_comp in K1s_K2s_comp):
+    	        minus_qs.append(Q)
+    	        break
     return(np.array(minus_qs))
 
 def get_alpha_full(trial,h2,q_list):
