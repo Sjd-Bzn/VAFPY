@@ -27,5 +27,6 @@ format = [
     "isort>=5.13.2",
 ]
 doc = [
-    "sphinx>=8.0.2",
+    "sphinx<8",
+    "sphinx-rtd-theme>=0.5.1",
 ]
