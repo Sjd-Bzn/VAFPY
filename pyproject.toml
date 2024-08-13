@@ -5,10 +5,27 @@ description = ""
 authors = [
     {name = "Martin Schlipf", email = "martin.schlipf@gmail.com"},
 ]
-dependencies = []
+dependencies = [
+    "numpy>=2.0.1",
+    "scipy>=1.14.0",
+    "opt-einsum>=3.3.0",
+]
 requires-python = ">=3.12"
 readme = "README.md"
 
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
+
+[tool.pdm]
+[tool.pdm.dev-dependencies]
+test = [
+    "pytest>=8.3.2",
+]
+format = [
+    "black>=24.8.0",
+    "isort>=5.13.2",
+]
+doc = [
+    "sphinx>=8.0.2",
+]
