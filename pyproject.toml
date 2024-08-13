@@ -4,6 +4,8 @@ version = "0.1.0"
 description = ""
 authors = [
     {name = "Martin Schlipf", email = "martin.schlipf@gmail.com"},
+    {name = "Amir Taheridehkordi", email = "amir.taheridehkordi@univie.ac.at"},
+    {name = "Sajad Bazrafshan", email = "sajjadbazrafshan6@gmail.com"},
 ]
 dependencies = [
     "numpy>=2.0.1",
@@ -13,6 +15,9 @@ dependencies = [
 ]
 requires-python = ">=3.12"
 readme = "README.md"
+
+[project.scripts]
+afqmc = "afqmc.main:main"
 
 [build-system]
 requires = ["pdm-backend"]

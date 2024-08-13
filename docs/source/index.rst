@@ -13,5 +13,6 @@ AFQMC documentation
     constants
     determinant
     field
+    logging
     propagate
     weight
