@@ -7,7 +7,7 @@ from afqmc import field, propagate
 
 def test_propagate_taylor(make_constants):
     constants = make_constants(tau=1e-4, propagate_order=10)
-    slater_det = np.random.random(constants.shape_slater_det).astype(np.complex_)
+    slater_det = np.random.random(constants.shape_slater_det).astype(np.complex128)
     auxiliary_field = field.auxiliary(constants, force_bias=None)
     potential = field.potential(constants, auxiliary_field)
     actual = propagate.taylor(constants, potential, slater_det)
@@ -18,7 +18,7 @@ def test_propagate_taylor(make_constants):
 
 def test_propagate_s2(make_constants):
     constants = make_constants(tau=1e-4, propagate_order=10)
-    slater_det = np.random.random(constants.shape_slater_det).astype(np.complex_)
+    slater_det = np.random.random(constants.shape_slater_det).astype(np.complex128)
     auxiliary_field = field.auxiliary(constants, force_bias=None)
     potential = field.potential(constants, auxiliary_field)
     actual = propagate.s2(constants, potential, slater_det)

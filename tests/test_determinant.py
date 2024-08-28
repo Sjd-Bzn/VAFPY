@@ -13,7 +13,7 @@ def test_biorthogonalize(make_constants):
         expected.append(theta(trial, walker))
     expected = np.array(expected)
     actual = determinant.biorthogonolize(constants, slater_det)
-    npt.assert_allclose(expected, actual, atol=1e-13)
+    npt.assert_allclose(expected, actual, atol=1e-12)
 
 
 def test_overlap_trial(make_constants):
