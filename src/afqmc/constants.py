@@ -4,6 +4,7 @@ import numpy as np
 import numpy.typing as npt
 from opt_einsum import contract_expression
 from scipy.linalg import expm
+from scipy.sparse import block_diag
 
 
 @dataclass
@@ -19,32 +20,35 @@ class Constants:
     "Number of electrons in the system."
     number_walker: int
     "Number of walkers during the AFQMC propagation."
-    number_k: int
-    "Number of **k** points in the Brillouin zone."
     tau: float
     "Time step for each step in the propagation."
     propagate_order: int = 6
     "Expand the exponential operator up to this order."
 
     @property
+    def number_k(self):
+        "Number of **k** points in the Brillouin zone."
+        return self.H1.shape[0]
+
+    @property
     def number_orbital(self):
         "Size of the basis in the orbital representation."
-        return self.L.shape[0]
+        return self.H1.shape[1]
 
     @property
     def number_g(self):
         "Number of interactions by which the two-body operator is represented."
-        return self.L.shape[-1]
+        return self.L.shape[-1] // self.number_k
 
     @property
     def shape_field(self):
         "Matrix shape of a random field."
-        return self.number_g, self.number_walker
+        return self.L.shape[-1], self.number_walker
 
     @property
     def shape_slater_det(self):
         "Tensor shape of all slater determinants."
-        return self.number_walker, self.number_orbital, self.number_electron
+        return self.number_walker, *self._hf_det.shape
 
     @property
     def sqrt_tau(self):
@@ -54,18 +58,28 @@ class Constants:
     @property
     def L_trial(self):
         "L projected on a trial determinant."
-        return self.L[: self.number_electron]
+        return self.L[self._occupied_mask]
 
     @property
     def exp_H1_half(self):
         "Precomputed value of exp(-H1 tau / 2)."
         return self._exp_H1_half
 
+    @property
+    def trial_det(self):
+        "Trial determinant which is equivalent to the HF determinant."
+        return self._hf_det
+
     def __post_init__(self):
-        self._get_potential = contract_expression(
+        hf_det_kpoint = np.eye(self.number_orbital, self.number_electron)
+        self._hf_det = block_diag(self.number_k * [hf_det_kpoint]).toarray()
+        number_empty = self.number_orbital - self.number_electron
+        mask_single_kpoint = self.number_electron * [True] + number_empty * [False]
+        self._occupied_mask = np.array(self.number_k * mask_single_kpoint)
+        self.get_potential = contract_expression(
             "ijg,gw->ijw", self.L, self.shape_field, constants=[0]
         )
-        self._get_force_bias = contract_expression(
+        self.get_force_bias = contract_expression(
             "wij,jig->gw", self.shape_slater_det, self.L_trial, constants=[1]
         )
         self._exp_H1_half = expm(-0.5 * self.tau * self.H1)

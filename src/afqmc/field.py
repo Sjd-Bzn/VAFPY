@@ -16,7 +16,7 @@ def potential(constants, auxiliary_field):
     -------
     Potential in matrix representation.
     """
-    return 1j * constants.sqrt_tau * constants._get_potential(auxiliary_field)
+    return 1j * constants.sqrt_tau * constants.get_potential(auxiliary_field)
 
 
 def auxiliary(constants, force_bias):
@@ -69,7 +69,7 @@ def force_bias(constants, slater_det):
     -------
     Force bias to minimize rotation to the complex plane for the Slater determinants.
     """
-    return -2j * constants.sqrt_tau * constants._get_force_bias(slater_det)
+    return -2j * constants.sqrt_tau * constants.get_force_bias(slater_det)
 
 
 def importance_sampling(auxiliary_field, force_bias):
