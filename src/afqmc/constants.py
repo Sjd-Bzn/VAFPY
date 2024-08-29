@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
-from opt_einsum import contract_expression
+from opt_einsum import contract, contract_expression
 from scipy.linalg import expm
 from scipy.sparse import block_diag
 
@@ -81,5 +81,16 @@ class Constants:
         )
         self.get_force_bias = contract_expression(
             "wij,jig->gw", self.shape_slater_det, self.L_trial, constants=[1]
+        )
+        alpha = contract("ni,nmg->img", self._hf_det, self.L)
+        beta = contract("ni,mng->img", self._hf_det, self.L.conj())
+        self.get_exchange = contract_expression(
+            "wni,jng,wmj,img->",
+            self.shape_slater_det,
+            alpha,
+            self.shape_slater_det,
+            beta,
+            constants=[1, 3],
+            optimize="greedy",
         )
         self._exp_H1_half = expm(-0.5 * self.tau * self.H1)
