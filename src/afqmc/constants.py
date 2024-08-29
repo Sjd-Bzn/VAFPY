@@ -71,26 +71,40 @@ class Constants:
         return self._hf_det
 
     def __post_init__(self):
-        hf_det_kpoint = np.eye(self.number_orbital, self.number_electron)
-        self._hf_det = block_diag(self.number_k * [hf_det_kpoint]).toarray()
-        number_empty = self.number_orbital - self.number_electron
-        mask_single_kpoint = self.number_electron * [True] + number_empty * [False]
-        self._occupied_mask = np.array(self.number_k * mask_single_kpoint)
+        self._hf_det = hf_det = self._setup_hf_det()
+        self._occupied_mask = self._setup_occupied_mask()
         self.get_potential = contract_expression(
             "ijg,gw->ijw", self.L, self.shape_field, constants=[0]
         )
         self.get_force_bias = contract_expression(
             "wij,jig->gw", self.shape_slater_det, self.L_trial, constants=[1]
         )
-        alpha = contract("ni,nmg->img", self._hf_det, self.L)
-        beta = contract("ni,mng->img", self._hf_det, self.L.conj())
-        self.get_exchange = contract_expression(
-            "wni,jng,wmj,img->w",
-            self.shape_slater_det,
-            alpha,
-            self.shape_slater_det,
-            beta,
-            constants=[1, 3],
-            optimize="greedy",
-        )
+        self.get_exchange, self.get_hartree = self._setup_hartree_and_exchange(hf_det)
         self._exp_H1_half = expm(-0.5 * self.tau * self.H1)
+
+    def _setup_hf_det(self):
+        hf_det_kpoint = np.eye(self.number_orbital, self.number_electron)
+        return block_diag(self.number_k * [hf_det_kpoint]).toarray()
+
+    def _setup_occupied_mask(self):
+        number_empty = self.number_orbital - self.number_electron
+        mask_single_kpoint = self.number_electron * [True] + number_empty * [False]
+        return np.array(self.number_k * mask_single_kpoint)
+
+    def _setup_hartree_and_exchange(self, hf_det):
+        alpha = contract("ni,nmg->img", hf_det, self.L)
+        beta = contract("ni,mng->img", hf_det, self.L.conj())
+        exchange_expression = "wni,jng,wmj,img->w"
+        hartree_expression = "wni,ing,wmj,jmg->w"
+        return (
+            contract_expression(
+                expression,
+                self.shape_slater_det,
+                alpha,
+                self.shape_slater_det,
+                beta,
+                constants=[1, 3],
+                optimize="greedy",
+            )
+            for expression in (exchange_expression, hartree_expression)
+        )
