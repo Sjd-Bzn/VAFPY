@@ -85,7 +85,7 @@ class Constants:
         alpha = contract("ni,nmg->img", self._hf_det, self.L)
         beta = contract("ni,mng->img", self._hf_det, self.L.conj())
         self.get_exchange = contract_expression(
-            "wni,jng,wmj,img->",
+            "wni,jng,wmj,img->w",
             self.shape_slater_det,
             alpha,
             self.shape_slater_det,

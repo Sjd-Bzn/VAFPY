@@ -6,11 +6,10 @@ from afqmc import determinant
 
 def test_biorthogonalize(make_constants):
     constants = make_constants()
-    trial = np.eye(constants.number_orbital, constants.number_electron)
     slater_det = np.random.random(constants.shape_slater_det)
     expected = []
     for walker in slater_det:
-        expected.append(theta(trial, walker))
+        expected.append(theta(constants.trial_det, walker))
     expected = np.array(expected)
     actual = determinant.biorthogonolize(constants, slater_det)
     npt.assert_allclose(expected, actual, atol=1e-12)
