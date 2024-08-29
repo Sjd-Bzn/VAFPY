@@ -40,8 +40,9 @@ def test_energy_walker(make_constants):
     Wij = np.einsum("ni,mng,wmj->wijg", constants.trial_det, constants.L.conj(), thetas)
     exchange = np.einsum("wijg,wijg,w", Vij, Wij, weight)
     hartree = 2 * np.einsum("wiig,wjjg,w", Vij, Wij, weight)
+    norm = 1 / sum(weight)
     actual = energy.sample(constants, slater_det, weight)
-    npt.assert_allclose(actual, exchange + hartree)
+    npt.assert_allclose(actual, norm * (exchange + hartree))
 
 
 def theta(trial, walker):

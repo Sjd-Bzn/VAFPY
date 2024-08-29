@@ -4,7 +4,7 @@ from afqmc import determinant
 def sample(constants, slater_det, weight):
     theta = determinant.biorthogonolize(constants, slater_det)
     energy = exchange(constants, theta) + hartree(constants, theta)
-    return energy @ weight
+    return energy @ weight / sum(weight)
 
 
 def exchange(constants, slater_det):
