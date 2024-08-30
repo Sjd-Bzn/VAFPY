@@ -25,6 +25,9 @@ class Constants:
     propagate_order: int = 6
     "Expand the exponential operator up to this order."
 
+    # currently hard coded should depend on whether the system has spin or not
+    spin_degeneracy = 2
+
     @property
     def number_k(self):
         "Number of **k** points in the Brillouin zone."
@@ -80,6 +83,7 @@ class Constants:
             "wij,jig->gw", self.shape_slater_det, self.L_trial, constants=[1]
         )
         self.get_exchange, self.get_hartree = self._setup_hartree_and_exchange(hf_det)
+        self.get_one_particle = self._setup_one_particle(hf_det)
         self._exp_H1_half = expm(-0.5 * self.tau * self.H1)
 
     def _setup_hf_det(self):
@@ -107,4 +111,15 @@ class Constants:
                 optimize="greedy",
             )
             for expression in (exchange_expression, hartree_expression)
+        )
+
+    def _setup_one_particle(self, hf_det):
+        H1 = block_diag(self.H1)
+        H1_trial = contract("ni,nm->im", hf_det, block_diag(self.H1).toarray())
+        return contract_expression(
+            "im,wmi->w",
+            H1_trial,
+            self.shape_slater_det,
+            constants=[0],
+            optimize="greedy",
         )
