@@ -28,7 +28,7 @@ def project_trial(constants, slater_det):
     return slater_det[:, mask]
 
 
-def biorthogonolize(constants, slater_det):
+def biorthogonalize(constants, slater_det):
     """Biortogonalize the orbital is the Slater determinant.
 
     Parameters

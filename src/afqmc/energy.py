@@ -2,7 +2,7 @@ from afqmc import determinant
 
 
 def sample(constants, slater_det, weight):
-    theta = determinant.biorthogonolize(constants, slater_det)
+    theta = determinant.biorthogonalize(constants, slater_det)
     Ex = exchange(constants, theta)
     Eh = hartree(constants, theta)
     E1 = one_particle(constants, theta)

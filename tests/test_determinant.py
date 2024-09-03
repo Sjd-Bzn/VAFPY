@@ -11,7 +11,7 @@ def test_biorthogonalize(make_constants):
     for walker in slater_det:
         expected.append(theta(constants.trial_det, walker))
     expected = np.array(expected)
-    actual = determinant.biorthogonolize(constants, slater_det)
+    actual = determinant.biorthogonalize(constants, slater_det)
     npt.assert_allclose(expected, actual, atol=1e-12)
 
 
