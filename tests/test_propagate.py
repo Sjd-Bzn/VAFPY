@@ -1,3 +1,5 @@
+import dataclasses
+
 import numpy as np
 import numpy.testing as npt
 import pytest
@@ -30,16 +32,17 @@ def test_propagate_s2(make_constants):
     npt.assert_allclose(actual, expected)
 
 
-@pytest.mark.skip("Test does not work at the moment, should be fixed.")
 def test_HF_energy(make_constants):
     # in the limit of small timesteps exp(-Ht) = I - Ht so that <H> = (1 - <exp(-Ht)>) / t
     number_walker = 1000
-    tau = 1e-6
+    tau = 1e-8
     constants = make_constants(tau=tau, propagate_order=10, number_walker=number_walker)
+    # constants = dataclasses.replace(constants, H1 = np.zeros_like(constants.H1))
+    constants = dataclasses.replace(constants, L=np.zeros_like(constants.L))
     slater_det = np.array(number_walker * [constants.trial_det], dtype=np.complex128)
     weight = np.ones(number_walker)
     expected = energy.sample(constants, slater_det, weight)
     slater_det, weight = propagate.time_step(constants, slater_det, weight)
-    overlap = determinant.project_trial(constants, slater_det)
-    actual = np.average((1 - overlap.real) / tau)
+    overlap = determinant.overlap_trial(constants, slater_det)
+    actual = np.average((1 - overlap) / tau)
     npt.assert_allclose(actual, expected)

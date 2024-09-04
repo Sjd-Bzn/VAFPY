@@ -67,4 +67,4 @@ def overlap_trial(constants, slater_det):
     This assumes the trial state is one on the diagonal and zero otherwise.
     """
     overlap = project_trial(constants, slater_det)
-    return np.linalg.det(overlap)
+    return np.linalg.det(overlap) ** 2

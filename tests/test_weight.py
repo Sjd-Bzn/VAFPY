@@ -13,8 +13,8 @@ def test_phaseless(make_constants):
     expected = []
     importance_sampling = 0.9 + 0.1j
     for old, new in zip(old_slater_det, new_slater_det):
-        old_overlap = np.linalg.det(old[: constants.number_electron])
-        new_overlap = np.linalg.det(new[: constants.number_electron])
+        old_overlap = np.linalg.det(old[: constants.number_electron]) ** 2
+        new_overlap = np.linalg.det(new[: constants.number_electron]) ** 2
         ratio = new_overlap / old_overlap
         phase_factor = max(0, np.cos(phase(ratio)))
         expected.append(np.abs(ratio * importance_sampling) * phase_factor)

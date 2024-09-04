@@ -6,6 +6,12 @@ import pytest
 from afqmc.constants import Constants
 
 
+@pytest.fixture(autouse=True, scope="session")
+def seed_random_numbers():
+    random.seed(811972495)
+    np.random.seed(526809193)
+
+
 @pytest.fixture
 def make_constants():
     def inner(number_orbital=None, number_g=None, number_k=1, **user_options):

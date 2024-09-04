@@ -18,7 +18,7 @@ def test_biorthogonalize(make_constants):
 def test_overlap_trial(make_constants):
     constants = make_constants()
     slater_det = np.random.random(constants.shape_slater_det)
-    expected = np.linalg.det(slater_det[:, : constants.number_electron])
+    expected = np.linalg.det(slater_det[:, : constants.number_electron]) ** 2
     npt.assert_allclose(determinant.overlap_trial(constants, slater_det), expected)
 
 

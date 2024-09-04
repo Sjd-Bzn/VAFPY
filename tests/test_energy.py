@@ -1,6 +1,7 @@
 import numpy as np
 import numpy.testing as npt
 from scipy.sparse import block_diag
+
 from afqmc import energy
 
 SPIN_DEGEN = 2
