@@ -24,6 +24,8 @@ class Constants:
     "Time step for each step in the propagation."
     propagate_order: int = 6
     "Expand the exponential operator up to this order."
+    use_force_bias: bool = True
+    "Should we use force bias in the calculations."
 
     # currently hard coded should depend on whether the system has spin or not
     spin_degeneracy = 2
@@ -64,6 +66,11 @@ class Constants:
         return self.L[self._occupied_mask]
 
     @property
+    def H1_full(self):
+        "In addition to H1, this contains also the mean-field subtraction and the self-interaction correction."
+        return self._H1_full
+
+    @property
     def exp_H1_half(self):
         "Precomputed value of exp(-H1 tau / 2)."
         return self._exp_H1_half
@@ -83,8 +90,10 @@ class Constants:
             "wij,jig->gw", self.shape_slater_det, self.L_trial, constants=[1]
         )
         self.get_exchange, self.get_hartree = self._setup_hartree_and_exchange(hf_det)
+        self._H1_full = self._setup_H1_full()
         self.get_one_particle = self._setup_one_particle(hf_det)
-        self._exp_H1_half = expm(-0.5 * self.tau * self.H1)
+        self._exp_H1_half = expm(-0.5 * self.tau * self._H1_full)
+        # self._exp_H1_half = expm(-0.5 * self.tau * self.H1)
 
     def _setup_hf_det(self):
         hf_det_kpoint = np.eye(self.number_orbital, self.number_electron)
@@ -114,8 +123,8 @@ class Constants:
         )
 
     def _setup_one_particle(self, hf_det):
-        H1 = block_diag(self.H1)
-        H1_trial = contract("ni,nm->im", hf_det, block_diag(self.H1).toarray())
+        # H1_trial = contract("ni,nm->im", hf_det, block_diag(self.H1).toarray())
+        H1_trial = contract("ni,nm->im", hf_det, block_diag(self._H1_full).toarray())
         return contract_expression(
             "im,wmi->w",
             H1_trial,
@@ -123,3 +132,12 @@ class Constants:
             constants=[0],
             optimize="greedy",
         )
+
+    def _setup_H1_full(self):
+        # TODO: implement k-point version
+        if self.number_k == 1:
+            SIC = contract("nmg,lmg->nl", self.L, self.L.conj())
+            print(np.diag(SIC))
+        else:
+            SIC = 0
+        return self.H1 + SIC

@@ -6,6 +6,7 @@ def sample(constants, slater_det, weight):
     Ex = exchange(constants, theta)
     Eh = hartree(constants, theta)
     E1 = one_particle(constants, theta)
+    print(f"{Ex=} {Eh=} {E1=}")
     return (Ex + Eh + E1) @ weight / sum(weight)
 
 
@@ -20,15 +21,3 @@ def hartree(constants, slater_det):
 
 def one_particle(constants, slater_det):
     return constants.spin_degeneracy * constants.get_one_particle(slater_det)
-
-
-def _slice_orbital(constants, kpoint):
-    return slice(
-        kpoint * constants.number_orbital, (kpoint + 1) * constants.number_orbital
-    )
-
-
-def _slice_electron(constants, kpoint):
-    return slice(
-        kpoint * constants.number_electron, (kpoint + 1) * constants.number_electron
-    )

@@ -86,5 +86,7 @@ def importance_sampling(auxiliary_field, force_bias):
     -------
     Importance sampling factor to correct the update of the weights.
     """
+    if force_bias is None:
+        return 1.0
     argument = contract("gw->w", (auxiliary_field + 0.5 * force_bias) * force_bias)
     return np.exp(argument)

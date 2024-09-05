@@ -22,8 +22,7 @@ def time_step(constants, old_slater_det, old_weight):
     new_weight
         Updated weights after the time step.
     """
-    biorthogonal_det = determinant.biorthogonalize(constants, old_slater_det)
-    force_bias = field.force_bias(constants, biorthogonal_det)
+    force_bias = _get_force_bias(constants, old_slater_det)
     auxiliary_field = field.auxiliary(constants, force_bias)
     potential = field.potential(constants, auxiliary_field)
     new_slater_det = s2(constants, potential, old_slater_det)
@@ -31,6 +30,12 @@ def time_step(constants, old_slater_det, old_weight):
     change_weight = weight.phaseless(constants, old_slater_det, new_slater_det, I)
     new_weight = old_weight * change_weight
     return new_slater_det, new_weight
+
+def _get_force_bias(constants, old_slater_det):
+    if not constants.use_force_bias:
+        return None
+    biorthogonal_det = determinant.biorthogonalize(constants, old_slater_det)
+    return field.force_bias(constants, biorthogonal_det)
 
 
 def s2(constants, potential, slater_det):

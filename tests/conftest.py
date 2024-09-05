@@ -28,6 +28,7 @@ def make_constants():
         H1 = 0.5 * (H1 + H1T)  # make Hermitian
         shape = number_k * np.array((number_orbital, number_orbital, number_g))
         L = np.random.random(shape) + 1j * np.random.random(shape)
+        L = 0.5 * np.einsum("nmg,mng->nmg", L, L.conj())
         return Constants(H1, L, **options)
 
     return inner
