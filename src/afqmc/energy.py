@@ -6,7 +6,6 @@ def sample(constants, slater_det, weight):
     Ex = exchange(constants, theta)
     Eh = hartree(constants, theta)
     E1 = one_particle(constants, theta)
-    print(f"{Ex=} {Eh=} {E1=}")
     return (Ex + Eh + E1) @ weight / sum(weight)
 
 

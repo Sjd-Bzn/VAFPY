@@ -127,9 +127,7 @@ def test_propagate_s2(make_constants):
 def test_only_H1(make_constants):
     tau = 1e-8
     number_walker = 1
-    constants = make_constants(
-        tau=tau, number_walker=number_walker, number_electron=3, L_zero=True
-    )
+    constants = make_constants(tau=tau, number_walker=number_walker, L_zero=True)
     slater_det = np.array([constants.trial_det], dtype=np.complex128)
     weight = np.ones(number_walker)
     expected = energy.sample(constants, slater_det, weight).real
@@ -137,3 +135,30 @@ def test_only_H1(make_constants):
     overlap = determinant.overlap_trial(constants, slater_det)
     actual = np.average((1 - overlap.real) / tau)
     npt.assert_allclose(actual, expected)
+
+
+def test_only_L_no_force_bias(make_constants):
+    tau = 1e-8
+    number_g = 25
+    number_walker = 10000
+    constants = make_constants(
+        tau=tau,
+        number_g=number_g,
+        number_walker=number_walker,
+        H1_zero=True,
+        use_force_bias=False,
+    )
+    slater_det = np.array(number_walker * [constants.trial_det], dtype=np.complex128)
+    weight = np.ones(number_walker)
+    expected = energy.sample(constants, slater_det, weight).real
+    # with patch("afqmc.field.random", return_value=np.eye(constants.number_g)):
+    slater_det, weight = propagate.time_step(constants, slater_det, weight)
+    overlap = determinant.overlap_trial(constants, slater_det)
+    actual = np.average((1 - overlap.real) / tau)
+    print(f"{constants.number_electron=}")
+    np.save("H1.npy", constants.H1)
+    np.save("L.npy", constants.L)
+    npt.assert_allclose(actual, expected)
+
+
+### TODO: Amir used different L for energy and time propagation

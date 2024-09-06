@@ -93,7 +93,6 @@ class Constants:
         self._H1_full = self._setup_H1_full()
         self.get_one_particle = self._setup_one_particle(hf_det)
         self._exp_H1_half = expm(-0.5 * self.tau * self._H1_full)
-        # self._exp_H1_half = expm(-0.5 * self.tau * self.H1)
 
     def _setup_hf_det(self):
         hf_det_kpoint = np.eye(self.number_orbital, self.number_electron)
@@ -137,7 +136,6 @@ class Constants:
         # TODO: implement k-point version
         if self.number_k == 1:
             SIC = contract("nmg,lmg->nl", self.L, self.L.conj())
-            print(np.diag(SIC))
         else:
             SIC = 0
         return self.H1 + SIC
