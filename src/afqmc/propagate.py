@@ -31,6 +31,7 @@ def time_step(constants, old_slater_det, old_weight):
     new_weight = old_weight * change_weight
     return new_slater_det, new_weight
 
+
 def _get_force_bias(constants, old_slater_det):
     if not constants.use_force_bias:
         return None

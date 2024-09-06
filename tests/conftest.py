@@ -14,7 +14,9 @@ def seed_random_numbers():
 
 @pytest.fixture
 def make_constants():
-    def inner(number_orbital=None, number_g=None, number_k=1, **user_options):
+    def inner(
+        number_orbital=None, number_g=None, number_k=1, L_zero=False, **user_options
+    ):
         number_orbital = number_orbital or random.randrange(4, 15)
         number_g = number_g or random.randrange(4, 30)
         default_options = {
@@ -27,8 +29,11 @@ def make_constants():
         H1T = np.moveaxis(H1, 1, -1)
         H1 = 0.5 * (H1 + H1T)  # make Hermitian
         shape = number_k * np.array((number_orbital, number_orbital, number_g))
-        L = np.random.random(shape) + 1j * np.random.random(shape)
-        L = 0.5 * np.einsum("nmg,mng->nmg", L, L.conj())
+        if L_zero:
+            L = np.zeros(shape, dtype=np.complex128)
+        else:
+            L = np.random.random(shape) + 1j * np.random.random(shape)
+            L = 0.5 * np.einsum("nmg,mng->nmg", L, L.conj())
         return Constants(H1, L, **options)
 
     return inner
