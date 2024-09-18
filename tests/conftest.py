@@ -38,11 +38,17 @@ def make_constants():
             H1 = np.random.random(shape_H1)
             H1 = 0.5 * np.einsum("knm,kmn->knm", H1, H1)  # make Hermitian
         shape_L = number_k * np.array((number_orbital, number_orbital, number_g))
-        if L_zero:
-            L = np.zeros(shape_L, dtype=np.complex128)
-        else:
-            L = np.random.random(shape_L) + 1j * np.random.random(shape_L)
-            L = 0.5 * np.einsum("nmg,mng->nmg", L, L.conj())
+        L = _setup_L(shape_L, L_zero)
         return Constants(H1, L, **options)
 
     return inner
+
+def _setup_L(shape_L, L_zero):
+    # This construction leads to the odd part of L being zero which is not in general
+    # the case. However, I did not find a way to initialize it with a value that leads
+    # to consistent results in the propagation. So please be careful to make sure the
+    # odd part is properly included.
+    if L_zero:
+        return np.zeros(shape_L, dtype=np.complex128)
+    L = np.random.random(shape_L) + 1j * np.random.random(shape_L)
+    return 0.5 * np.einsum("nmg,mng->nmg", L, L.conj())

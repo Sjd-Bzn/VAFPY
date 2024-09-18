@@ -140,7 +140,7 @@ def test_only_H1(make_constants):
 def test_only_L_no_force_bias(make_constants):
     tau = 1e-8
     number_g = 25
-    number_walker = 10000
+    number_walker = 100000
     constants = make_constants(
         tau=tau,
         number_g=number_g,
@@ -149,16 +149,30 @@ def test_only_L_no_force_bias(make_constants):
         use_force_bias=False,
     )
     slater_det = np.array(number_walker * [constants.trial_det], dtype=np.complex128)
-    weight = np.ones(number_walker)
-    expected = energy.sample(constants, slater_det, weight).real
+    weight = np.ones(1)
+    expected = energy.sample(constants, constants.trial_det[np.newaxis], weight).real
     # with patch("afqmc.field.random", return_value=np.eye(constants.number_g)):
     slater_det, weight = propagate.time_step(constants, slater_det, weight)
+    print(slater_det.shape)
     overlap = determinant.overlap_trial(constants, slater_det)
+    print(overlap.shape, sum(weight))
     actual = np.average((1 - overlap.real) / tau)
+    Lf = constants.L_full
+    Lf_occ = Lf[:constants.number_electron][:,:constants.number_electron]
+    Eh = 2 * np.einsum("iig,jjg->", Lf_occ, Lf_occ)
+    Ex = np.einsum("iag,aig->", Lf[:constants.number_electron][:,constants.number_electron:],
+    Lf[constants.number_electron:][:,:constants.number_electron])
+    Esic = np.einsum("iag,aig->", Lf[:constants.number_electron],
+    Lf[:,:constants.number_electron])
+    expected2 = Esic - Ex + Eh
+    print(f"{Ex=} {Eh=} {Esic=} {expected2=}")
     print(f"{constants.number_electron=}")
+    print(f"{actual=} {expected=} {expected2=}")
     np.save("H1.npy", constants.H1)
     np.save("L.npy", constants.L)
+    np.save("H1_full.npy", constants.H1_full)
+    np.save("L_full.npy", constants.L_full)
     npt.assert_allclose(actual, expected)
-
+    assert False
 
 ### TODO: Amir used different L for energy and time propagation
