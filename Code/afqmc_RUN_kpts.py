@@ -59,32 +59,51 @@ if first_cpu:
 
     print()
     print('###########################')
-    print('Rading Hamiltonian...')
+    print('Rading and Reshaping Hamiltonian')
 
 np.random.seed(15462)
 
-hamil = HAMILTONIAN
-h1 = np.array(read_datafile(input_file_one_body_hamil), order='C')
-#h1 = np.zeros_like(h1)
-
-hamil.two_body = np.array(read_datafile(input_file_two_body_hamil),dtype=np.complex64)
 if first_cpu:
-    print('Constructing Hermitian Conjugate')
+    hamil = HAMILTONIAN
+############################################
 
-h2_t = np.einsum('rpG->prG', hamil.two_body.conj())
+####### reshape the H1.npy and H2.npy ######
+
+############################################
+### H1
+    H1 = np.array(read_datafile(input_file_one_body_hamil),dtype=np.complex128)
+    h1 = reshape_H1(H1, num_k, num_orb)
+    hamil.one_body = h1
+### H2
+    H2 = np.array(read_datafile(input_file_two_body_hamil),dtype=np.complex128)
+    h2 = reshape_H2(H2, num_k)
+    hamil.two_body = h2
+#### H2 dager
+    h2_t = np.einsum('rpG->prG', hamil.two_body.conj())
+
 
 if first_cpu:
-    print('Hermitian Cojugate constructed Successfully')
+    print('Hamiltonian constructed Successfully')
     print()
     print('###########################')
-    print()
 
     print()
     print('###########################')
     print()
     print('Checking Shapes...')
     print()
-    print('hamil_two_body.shape -> ', hamil.two_body.shape)
+    print('H1.npy and H2.npy shape')
+
+    print('H1.npy shape -> ', H1.shape)
+    print('H2.npy shape -> ', H2.shape)
+    
+    print( 'After reshaping ')
+    print()
+    print('h1 shape -> ', hamil.one_body.shape)
+    print('h2 shape -> ', hamil.two_body.shape)
+    print('h1 size in bytes -> ', hamil.one_body.itemsize)
+    print('h2 size in bytes -> ', hamil.two_body.itemsize)
+    print('h2_t size in bytes ->', h2_t.itemsize)
     print('Number of orbitals = ', int(hamil.two_body.shape[0]/num_k))
     print('Number of AF fields = ', hamil.two_body.shape[2] )
     print()
@@ -113,23 +132,6 @@ if first_cpu:
     print('m_q = ', m_q)
 
 
-###################################################
-#
-#  Reshape H1
-#
-###################################################
-H1=np.zeros([num_orb*num_k,num_orb*num_k],dtype=np.complex64)
-for i in range(0,num_k):
-    H1[i*num_orb:(i+1)*num_orb,i*num_orb:(i+1)*num_orb] = h1[:,:,i]
-for i in range(0,num_k):
-    if first_cpu:
-        print('H1 check?',np.allclose(H1[i*num_orb:(i+1)*num_orb,i*num_orb:(i+1)*num_orb] ,h1[:,:,i]))
-hamil.one_body = H1
-
-print('h1 -> ', hamil.one_body.itemsize)
-print('h2 -> ', hamil.two_body.itemsize)
-print('h2_t->', h2_t.itemsize)
-
 if first_cpu:
     print()
     print('###########################')
@@ -152,11 +154,11 @@ h2_af_MF_sub = A_af_MF_sub(PSI_T_up_0,PSI_T_up,hamil.two_body,ql)
 #h2_af_MF_sub_new = A_af_MF_sub_new(PSI_T_up,hamil.two_body,ql)
 #h2_af_MF_sub = np.load('H2_af.npy')
 
-hamil_MF.zero_body = H_0_mf(PSI_T_up_0,PSI_T_up,hamil.two_body,h2_t,ql)
-H_zero = hamil_MF.zero_body
-print('H_zero = ', H_zero)
-hamil_MF.one_body = H_1_mf(PSI_T_up_0,PSI_T_up,hamil.two_body,h2_t,ql,hamil.one_body)
+H_zero = H_0_mf(PSI_T_up_0,PSI_T_up,hamil.two_body,h2_t,ql)
 
+hamil_MF.one_body = H_1_mf(PSI_T_up_0,PSI_T_up,hamil.two_body,h2_t,ql,hamil.one_body)
+#H1_exp = expm(H_1_self)
+#H1_self_half_exp = expm(H_1_self/2)
 '''
 hamil_MF.two_body_e = gen_A_e_full(h2_af_MF_sub)
 hamil_MF.two_body_o = gen_A_o_full(h2_af_MF_sub)
@@ -177,9 +179,9 @@ if first_cpu:
     print()
     print('##########################')
     print('Self-energy calculation in progress...')
-h_self = -contract('ijG,jkG->ik',hamil.two_body,h2_t)/2#/num_k
-H_1_self = -D_TAU * (hamil_MF.one_body+h_self)
-del(h_self)
+#h_self = -contract('ijG,jkG->ik',hamil.two_body,h2_t)/2#/num_k
+#H_1_self = -D_TAU * (hamil_MF.one_body+h_self)
+#del(h_self)
 if first_cpu:
     print('Self-energy calculation completed.')
     print()
@@ -289,7 +291,7 @@ while (j<NUM_STEPS+1):
     old_walkers_up = walkers.mats_up
     old_weights = walkers.weights
     update_time_st=time()
-    walkers.mats_up,walkers.weights = update_walker(PSI_T_up_0,PSI_T_up,walkers.mats_up,walkers.weights,ql,H_zero,H_1_self,D_TAU,e_hf,update_method)
+    walkers.mats_up,walkers.weights = update_walker(PSI_T_up_0,PSI_T_up,walkers.mats_up,walkers.weights,ql,H_zero,hamil_MF.one_body,D_TAU,e_hf,update_method)
     #print('walkers.mats_up,walkers.weights ', walkers.mats_up.itemsize,walkers.weights.itemsize)
     #print('walkers.weights = ', walkers.weights)
     #print('np.sum(walkers.weights) = ', np.sum(walkers.weights))
@@ -310,8 +312,8 @@ while (j<NUM_STEPS+1):
         energy_time_st = time()
         
         
-        energy_new = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
-        
+        #energy_new = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
+        energy_new = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil_MF.one_body)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
         
         
         
@@ -378,7 +380,7 @@ data1=np.loadtxt(file_out)
 data = data1[:,[1]]
 st = int(len(data)*EQUILIBRATION)
 en = len(data)
-a = blockAverage(data[st:en])
+a = blockAverage(data[st:en], block_divisor)
 if first_cpu:
    print()
    print('Calculating ground state energy...')

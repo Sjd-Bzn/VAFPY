@@ -1,4 +1,4 @@
-from mpi4py import MPI
+#from mpi4py import MPI
 import numpy as np
 from time import time
 from dataclasses import dataclass
@@ -11,8 +11,8 @@ from opt_einsum import contract_expression
 #from afqmc_alpha import expr_hart
 from afqmc_alpha import expr_h2_e
 from afqmc_alpha import expr_h2_o
-#from afqmc_alpha import ALPHA_E
-#from afqmc_alpha import ALPHA_O
+from afqmc_alpha import ALPHA_E
+from afqmc_alpha import ALPHA_O
 #from afqmc_alpha import expr_exch_new
 #from afqmc_alpha import expr_hart_new
 from afqmc_alpha import expr_hart_new_new
@@ -22,15 +22,15 @@ from afqmc_alpha import expr_fb_o
 
 @dataclass
 class HAMILTONIAN:
-    one_body: np.complex64   ## H_1 = sum(k) sum(pq) h(pq)(k) * a(dagger(p)(k)) * a(q)(k)  ## H_1 = np.sum((np.sum(t(pq)* np.matmul(adagger, a)))  ##adagger = np.conj(a).T 
-    two_body: np.complex64   ## H_2 = 1/2 sum(q, G) L(qG) * L(dagger)(qG)   ## L(qG) = np.sqrt(4*np.pi)/np.abs(G-q) * np.sum(np.sum( rho(prkr(q, G)) * np.matmul(np.conj(a).T(pk_r +q), a(rk_r))
+    one_body: np.complex128   ## H_1 = sum(k) sum(pq) h(pq)(k) * a(dagger(p)(k)) * a(q)(k)  ## H_1 = np.sum((np.sum(t(pq)* np.matmul(adagger, a)))  ##adagger = np.conj(a).T 
+    two_body: np.complex128   ## H_2 = 1/2 sum(q, G) L(qG) * L(dagger)(qG)   ## L(qG) = np.sqrt(4*np.pi)/np.abs(G-q) * np.sum(np.sum( rho(prkr(q, G)) * np.matmul(np.conj(a).T(pk_r +q), a(rk_r))
 
 @dataclass
 class HAMILTONIAN_MF:
-    zero_body: np.complex64   ## Nuclei repulsion  H_0 = np.sum (Z(a). Z(b)/np.abs(R(a) - R(b))) 
-    one_body: np.complex64    ## Kinetic and coulomb attarction  H_1 = (-1/2) np.sum(np.gradient(np.gradient(psi, r), r) H_1 = -np.sum(np.sum(Z(a)/np.abs((r(i) - R(a)))))  
-    two_body_e: np.complex64  ## electron repulsion      H_2 = np.sum(1/np.abs(r(i)- r(j)))
-    two_body_o: np.complex64  ## ...
+    zero_body: np.complex128   ## Nuclei repulsion  H_0 = np.sum (Z(a). Z(b)/np.abs(R(a) - R(b))) 
+    one_body: np.complex128    ## Kinetic and coulomb attarction  H_1 = (-1/2) np.sum(np.gradient(np.gradient(psi, r), r) H_1 = -np.sum(np.sum(Z(a)/np.abs((r(i) - R(a)))))  
+    two_body_e: np.complex128  ## electron repulsion      H_2 = np.sum(1/np.abs(r(i)- r(j)))
+    two_body_o: np.complex128  ## ...
 
 @dataclass
 class WALKERS:
@@ -56,6 +56,7 @@ def show_params():
     print('D_TAU = ', D_TAU)
     print('NUM_WALKERS = ', NUM_WALKERS)
     print('NUM_STEPS = ', NUM_STEPS)
+    print('Propagator = ', propagator)
     print('Block_Divisor', block_divisor)
     print('UPDATE_METHOD = ', UPDATE_METHOD)
     print('REORTHO_PERIODICITY = ', REORTHO_PERIODICITY)
@@ -63,14 +64,35 @@ def show_params():
     print('output_file = ', output_file)
     return None
 
-def read_datafile(filename):
+def read_datafile(filename): 
     '''
     Read the data from the given file into a numpy array.
     '''
     return np.load(filename)
 
+def reshape_H1(H1, num_k, num_orb):
+    '''
+    Reshape H1 (H1.npy shape is num_orb, num_orb, num_k   
+    we implement the k_points to the H1)
+    '''
+    h1=np.zeros([num_orb*num_k,num_orb*num_k],dtype=np.complex128)
+    for i in range(0,num_k):
+        h1[i*num_orb:(i+1)*num_orb,i*num_orb:(i+1)*num_orb] = H1[:,:,i]
+    for i in range(0,num_k):
+        if first_cpu:
+            print('H1 check?',np.allclose(h1[i*num_orb:(i+1)*num_orb,i*num_orb:(i+1)*num_orb] ,H1[:,:,i]))
+    return h1
+
+def reshape_H2(H2, num_k):
+    '''
+    generally the H2.npy (vasp output) has the shape of
+    num_g * num_k ,num_orb * num_k, num_orb but we need
+    num_orb * num_k, num_orb * num_k, ng'''
+    h2 = H2.reshape(H2.shape[2], H2.shape[1] * num_k , H2.shape[0]/num_k)
+    return h2
+    
 def exp_Taylor(mat):
-    OUT = np.eye(num_orb*num_k,dtype = 'complex_')
+    OUT = np.eye(num_orb*num_k,dtype = 'complex128')
     C = np.eye(num_orb*num_k)
     for i in range (0,order_trunc):
       C = mat@C/(i+1)
@@ -235,7 +257,7 @@ def A_af_MF_sub_new(trial,h2,q_list):
             for g in range(h2_shape[2]):
                 for r in range(num_orb):
                     avg_A_mat[(K1-1)*num_orb+r][(K2-1)*num_orb+r][g]=avg_A_vec_Q[g]
-    return h2-avg_A_mat/num_electrons_up/2/num_k
+    return h2-avg_A_mat/(2*num_electrons_up*num_k)
 
 def A_af_MF_sub(trial_0,trial,h2,q_list):
     '''
@@ -250,7 +272,7 @@ def A_af_MF_sub(trial_0,trial,h2,q_list):
             for g in range(h2_shape[2]):
                 for r in range(num_orb):
                     avg_A_mat[(K1-1)*num_orb+r][(K2-1)*num_orb+r][g]=avg_A_vec_Q[g]
-    return h2-avg_A_mat/num_electrons_up/2/num_k
+    return h2-avg_A_mat/(2*num_electrons_up*num_k)
 
 def H_1_mf(trial_0,trial,h2,h2_dagger,q_list,h1):
     '''
@@ -276,50 +298,19 @@ def H_0_mf(trial_0,trial,h2,h2_dagger,q_list):
         result +=  -(np.einsum('G->',avg_A_vec_Q*avg_A_vec_Q_dagger))/2/2/num_electrons_up/num_k
     return result
 
-#@profile
-first_call = True
-def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0):
-    NG = num_g
-    new_walker_mat = np.zeros_like(walker_mat)
-    new_walker_weight = np.zeros_like(walker_weight)
-    theta_mat = []
-    for i in range(NUM_WALKERS):
-        theta_mat.append(theta(trial, walker_mat[i]))
-    theta_mat=np.array(theta_mat)
-    #fb_e_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, _e,optimize='greedy')
-    fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat) 
-    #fb_o_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, alpha_full_o,optimize='greedy')
-    fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat)
-    x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-    x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-#    x_e_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(comm.Get_size(),NG,NUM_WALKERS)[comm.Get_rank()]
-#    x_o_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(comm.Get_size(),NG,NUM_WALKERS)[comm.Get_rank()]
-#    x_e_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(NG,NUM_WALKERS,comm.Get_size())[:,:,comm.Get_rank()]
-#    x_o_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(NG,NUM_WALKERS,comm.Get_size())[:,:,comm.Get_rank()]
-#    global first_call
-#    if first_call:
-#        first_call = False
-#    else:
-#        with open(f"size_{comm.Get_size()}_rank_{comm.Get_rank()}", "w") as f:
-#            for i in range(NUM_WALKERS):
-#                f.write(f"{comm.Get_size() * i + comm.Get_rank()} {x_e_Q[:,i]}\n")
-#        comm.barrier()
-#        exit()
-    h_2 = expr_h2_e(x_e_Q-fb_e_Q.T)+expr_h2_o(x_o_Q-fb_o_Q.T)  
-    #h_2 = h_mf.two_body_e@(x_e_Q-fb_e_Q.T) + h_mf.two_body_o@(x_o_Q-fb_o_Q.T)
-    for i in range(0,NUM_WALKERS):
-        h=h_1+SQRT_DTAU*1j*h_2[:,:,i]                                                                                                         ### !!!!!!!!!!!!!!
-        addend = walker_mat[i]
-        for j in range(order_trunc+1):
-            new_walker_mat[i] += addend
-            addend = h@addend/(j + 1)
-        ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i]))**2 / np.linalg.det(overlap(trial,walker_mat[i]))**2
-        alpha = phase(ovrlap_ratio)
-        new_walker_weight[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_e_Q[:,i],fb_e_Q[i])-np.dot(fb_e_Q[i],fb_e_Q[i]/2))*np.exp(np.dot(x_o_Q[:,i], fb_o_Q[i])-np.dot(fb_o_Q[i],fb_o_Q[i]/2))))* max(0,np.cos(alpha))*walker_weight[i]
-    return new_walker_mat, new_walker_weight
 
-def swap(a):
-    return (a[1],a[0])
+def gen_minus_q(q_list):
+    qs=np.arange(1,num_k+1)
+    minus_qs =[1]
+    for q_selected in range (2,num_k+1):
+        K1s_K2s = get_k1s_k2s(q_list,q_selected)
+        for Q in range(2,num_k+1):
+            K1s_K2s_comp = get_k1s_k2s(q_list,Q)
+            if any(pair == swap(pair_comp) for pair_comp in K1s_K2s_comp):
+    	        minus_qs.append(Q)
+    	        break
+    return(np.array(minus_qs))
+
 
 #def gen_minus_q(q_list):
 #    qs=np.arange(1,num_k+1)
@@ -338,18 +329,10 @@ def swap(a):
 #                            break
 #    return(np.array(minus_qs))
 
+def swap(a):
+    return (a[1],a[0])
 
-def gen_minus_q(q_list):
-    qs=np.arange(1,num_k+1)
-    minus_qs =[1]
-    for q_selected in range (2,num_k+1):
-        K1s_K2s = get_k1s_k2s(q_list,q_selected)
-        for Q in range(2,num_k+1):
-            K1s_K2s_comp = get_k1s_k2s(q_list,Q)
-            if any(pair == swap(pair_comp) for pair_comp in K1s_K2s_comp):
-    	        minus_qs.append(Q)
-    	        break
-    return(np.array(minus_qs))
+
 
 def get_alpha_full(trial,h2,q_list):
     out=[]
@@ -362,6 +345,100 @@ def get_alpha_full_t(trial,h2_dagger,q_list,minus_q):
     for q_selected in range(1,num_k+1):
         out.append(get_alpha_Q_full_mat(trial,h2_dagger,q_list,minus_q[q_selected-1]))
     return(np.array(out))
+
+
+
+
+
+
+
+
+#@profile
+first_call = True
+ 
+
+
+def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1_mf,d_tau,e_0,propagator):
+    NG = num_g
+    new_walker_mat = np.zeros_like(walker_mat)
+    new_walker_weight = np.zeros_like(walker_weight)
+    theta_mat = []
+    for i in range(NUM_WALKERS):
+        theta_mat.append(theta(trial, walker_mat[i]))
+    theta_mat=np.array(theta_mat)
+    
+    #fb_e_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, alpha_full_e,optimize='greedy') 
+    #fb_o_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, alpha_full_o,optimize='greedy') 
+    
+    fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat) 
+    fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat)
+    #fb_Q = -2j * SQRT_DTAU * expr_fb(theta_mat)
+
+
+    ####Boundary condition for rare events  based on:https://doi.org/10.1103/PhysRevB.80.214116
+
+
+    fb_e_Q[abs(fb_e_Q)>1] = 1.0
+    fb_o_Q[abs(fb_o_Q)>1] = 1.0
+    #fb_Q[abs(fb_Q)>1] = 1.0
+
+
+    ##########################################################################################
+    x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+    x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+    #x_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+    h_2 = expr_h2(x_e_Q-fb_e_Q.T)+expr_h2_o(x_o_Q-fb_o_Q.T)       
+    ######h_2 = h_mf.two_body_e@(x_e_Q-fb_e_Q.T) + h_mf.two_body_o@(x_o_Q-fb_o_Q.T)
+    #h_2 = expr_h2(x_Q-fb_Q.T)
+    
+    h_1_mf = h_1_mf 
+
+    for i in range(0,NUM_WALKERS):
+        h = -d_tau * h_1_mf + SQRT_DTAU * 1j * h_2[:,:,i]
+
+
+#####        Different propagators Taylor, S1, and S2
+        
+        if propagator == 'Taylor':
+            prop_taylor = np.exp(d_tau * (-h_0 + e_0)) * exp_Taylor(h)
+            new_walker_mat[i] = prop_taylor @ walker_mat[i]
+
+        elif propagator == 'S1':
+            
+            H1_self_exp = expm(H_1_self)
+            prop_S1 = np.exp(d_tau * (-h_0 + e_0)) * expm(h_1_mf) * exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i])
+            new_walker_mat[i] = prop_S1 @ walker_mat[i]
+        
+        elif propagator == 'S2':
+            prop_S2 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1_mf / 2) @ exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i]) @ expm(-d_tau * h_1_mf / 2)
+            new_walker_mat[i] = prop_S2 @ walker_mat[i]
+        
+        else:
+            raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
+   
+       	ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i]))**2 / np.linalg.det(overlap(trial,walker_mat[i]))**2
+        ##ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i])) / np.linalg.det(overlap(trial,walker_mat[i]))
+        alpha = phase(ovrlap_ratio)
+
+###new_weight
+        
+        new_walker_weight[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_e_Q[:,i],fb_e_Q[i])-np.dot(fb_e_Q[i],fb_e_Q[i]/2))*np.exp(np.dot(x_o_Q[:,i], fb_o_Q[i])-np.dot(fb_o_Q[i],fb_o_Q[i]/2))))* max(0,np.cos(alpha))*walker_weight[i]
+    return new_walker_mat, new_walker_weight
+
+def propagator_fp(h_mf,h_1,d_tau,e_0):
+    '''
+    Free projection propagator.
+    '''
+    h_0 = h_mf.zero_body
+    Ae_list = h_mf.two_body_e
+    Ao_list = h_mf.two_body_o
+    NG = Ae_list.shape[2]
+    x_e = np.random.randn(NG)
+    x_o = np.random.randn(NG)
+    h_2 =  Ae_list@x_e + Ao_list@x_o
+    return np.exp(-d_tau*(h_0-e_0))*exp_Taylor(-h_1 * d_tau + np.sqrt(d_tau)*1j*h_2)
+
+
 
 #@profile
 #def measure_E_gs(trial,weights,walkers,h_1,h2,h2_dagger,q_list,minus_q,alpha_full,alpha_full_t,comm):
@@ -391,6 +468,8 @@ def measure_E_gs_old(trial,weights,walkers,h_1):#,comm):
     sum_w = np.sum(weights)
     comm.reduce(sum_w)
     return val/sum_w
+
+
 
 #@profile
 def measure_E_gs(trial,weights,walkers,h_1):#,alpha_full,alpha_full_t):#,comm):
@@ -422,20 +501,8 @@ def measure_E_gs(trial,weights,walkers,h_1):#,alpha_full,alpha_full_t):#,comm):
 
 
 
-def propagator_fp(h_mf,h_1,d_tau,e_0):
-    '''
-    Free projection propagator.
-    '''
-    h_0 = h_mf.zero_body
-    Ae_list = h_mf.two_body_e
-    Ao_list = h_mf.two_body_o
-    NG = Ae_list.shape[2]
-    x_e = np.random.randn(NG)
-    x_o = np.random.randn(NG)
-    h_2 =  Ae_list@x_e + Ao_list@x_o
-    return np.exp(-d_tau*(h_0-e_0))*exp_Taylor(h_1+np.sqrt(d_tau)*1j*h_2)    
 
-def update_fp(trial_0,trial,walker_mat,walker_weight,q_list,h_mf,h_1,d_tau,e_0,h_original,h2_dagger,alpha_full_e,alpha_full_o):
+def update_fp(trial_0,trial,walker_mat,walker_weight,q_list,h_mf,h_1,d_tau,e_0,h_original,h2_dagger,alpha_full_e,alpha_full_o,propagator):
     h_0 = h_mf.zero_body
     h_2 = 1j*np.zeros([num_orb*num_k,num_orb*num_k,NUM_WALKERS])
     NG = h_mf.two_body_e.shape[2]
@@ -519,7 +586,7 @@ def init_walkers_weights(n_walkers):
     '''
     return np.ones(n_walkers, dtype=np.complex128)
 
-def blockAverage(datastream):
+def blockAverage(datastream, block_divisor):
     Nobs = len(datastream)
     N = block_divisor
     minBlockSize = 1;
@@ -553,7 +620,7 @@ def set_update_method(method):
         return update_hyb
 
 def update_walker(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,selected_update_method):
-    return selected_update_method(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0)
+    return selected_update_method(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,propagator)
 
 def h2_q_name(q_selected):
     if q==1:

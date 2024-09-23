@@ -42,6 +42,8 @@ comm = MPI.COMM_WORLD
 size = comm.Get_size()
 NUM_WALKERS=NUM_WALKERS//size
 
+propagator = inputs["PROPAG"]
+
 order_trunc =inputs.get("OTEY", 6)                                     ### exp_Taylor (matrics to ex)
 
 trsh_imag =inputs.get("TIMG", 2000)                                    ### ???
