@@ -11,6 +11,7 @@
       FSG      : 0
 
       CONTROL PARAMETER FOR THIS RUN: 
+      PROPAG   : S2   ### S1, S2, Taylor
       EQLB     : 0.2
       DTAU     : 0.005
       NWAK     : 256

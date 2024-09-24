@@ -1,31 +1,33 @@
-      SYSTEM   : H2O
+      SYSTEM   : Diamond
       
       System Properties:
       NGVEC    : 170
-      NEUP     : 5
-      NEDOWN   : 5
+      NEUP     : 4
+      NEDOWN   : 4
       NORB     : 24
-      EHZB     : -142.09249198310414
-      ECONST   : 9.20490701
+      EHZB     : 0 #-142.09249198310414
+      ECONST   : 0 #9.20490701
       SPIN     : 0
+      FSG      : 0
 
       CONTROL PARAMETER FOR THIS RUN: 
-      EQLB     : 0.1
-      DTAU     : 0.005 
-      NWAK     : 256           
-      NSTP     : 1000  
+      PROPAG   : S2   ### S1, S2, Taylor
+      EQLB     : 0.2
+      DTAU     : 0.005
+      NWAK     : 256
+      NSTP     : 10000
       BLKDIV   : 10
       KPOINT   : 1
-      TMAX     : 184800
+      TMAX     : 500
       OTEY     : 6
       TIMG     : 2000
       TREL     : 2000
                      
       METHOD IMPLEMENTATION:
-      UPDTM    : H               
+      UPDTM    : H
       REOPRI   : 1
-      REBPRI   : 5
-      SMFRQ    : 1
+      REBPRI   : 200
+      SMFRQ    : 10
       CHPRI    : 1000
 
       SINGULAR VALUE DECOMPOSITION and HATREE-FOCK:
@@ -33,4 +35,4 @@
       SVDT     : 1e-3
       HF       : False
       HFTAU    : 1.0e-10
-      HFSTP    : 1   
+      HFSTP    : 1

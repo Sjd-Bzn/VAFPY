@@ -295,6 +295,8 @@ def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0):
     for i in range(0,NUM_WALKERS):
         h=h_1+SQRT_DTAU*1j*h_2[:,:,i]
         addend = walker_mat[i]
+        print("walker_mat", walker_mat.shape)
+        print("h", h.shape)
         for j in range(order_trunc+1):
             new_walker_mat[i] += addend
             addend = h@addend/(j + 1)
