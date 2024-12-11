@@ -119,7 +119,16 @@ if first_cpu:
     print('##########################')
     print()
     print ('Reading Q_list...')
-ql = np.array(read_datafile(q_list),order='C').T
+#ql = np.array(read_datafile(q_list),order='C').T
+ql = []
+for i in range(1,num_k+1):
+    for j in range(1,num_k+1):
+        for k in range(1,num_k+1):
+            if abs(i-j)==k-1:
+                ql.append([i,j,k])
+ql = np.array(ql)
+
+
 if first_cpu:
     print('Q_list read successfully')
 
