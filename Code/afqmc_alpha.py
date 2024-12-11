@@ -114,10 +114,23 @@ def get_q_list(q_list,q_selected):
 
 @dataclass
 class HAMILTONIAN_MF:
-    zero_body: np.complex64
-    one_body: np.complex64
-    two_body_e: np.complex64
-    two_body_o: np.complex64
+    zero_body: np.complex128
+    one_body: np.complex128
+    two_body_e: np.complex128
+    two_body_o: np.complex128
+
+def mean_field( h2, num_elec, num_band):
+    mask = np.array(num_k * (num_elec * [True] + (num_band - num_elec) * [False]))
+    m = np.sum(h2[mask,mask], axis=0)
+    #m = np.einsum("iig->g", H2[mask][:,mask])
+    #m = np.linalg.det( h2[:num_elec, : num_elec].T)
+    return m
+
+
+
+
+
+
 
 def H_0_mf(trial_0,trial,h2,h2_dagger,q_list):
     '''
@@ -199,17 +212,24 @@ def overlap(left_slater_det, right_slater_det):
 
 hamil = HAMILTONIAN
 h1 = np.array(read_datafile(input_file_one_body_hamil),order='C')
-H1=np.zeros([num_orb*num_k,num_orb*num_k],dtype=np.complex64)
+H1=np.zeros([num_orb*num_k,num_orb*num_k],dtype=np.complex128)
 for i in range(0,num_k):
     H1[i*num_orb:(i+1)*num_orb,i*num_orb:(i+1)*num_orb] = h1[:,:,i]
 hamil.one_body = H1
 print('h1 -> ', hamil.one_body.itemsize)
 del(h1)
 del(H1)
-hamil.two_body = np.array(read_datafile(input_file_two_body_hamil),dtype=np.complex64)
-print('h2 -> ', hamil.two_body.itemsize)
-h2_t = np.einsum('rpG->prG', hamil.two_body.conj())
-print('h2_t -> ', h2_t.itemsize)
+ql = np.array(read_datafile(q_list),order='C').T
+
+
+
+
+H2 = np.array(read_datafile(input_file_two_body_hamil),dtype=np.complex128)
+h2 = H2#np.moveaxis(H2, 0, -1) 
+hamil.two_body = h2
+h2_t = np.einsum('prG->rpG', hamil.two_body.conj())
+
+
 ql = np.array(read_datafile(q_list),order='C').T
 m_q = gen_minus_q(ql)
 print('Hamiltonian done')
@@ -220,12 +240,16 @@ print('Hamiltonian done')
 #np.save('alpha_intl.npy',alp)
 #print('alpha done')
 #alp_t = get_alpha_full_t(PSI_T_up,h2_t,ql,m_q)
+print('PSI_T_up', PSI_T_up.shape)
+print('hamil_two ',hamil.two_body.shape)
+alp = np.einsum('pi, prg -> irg',PSI_T_up , hamil.two_body)
+alp_t = np.einsum('pi, rpg -> irg', PSI_T_up, hamil.two_body.conj())
 #print('alpha_t done')
-#np.save('alpha_t_intl.npy',alp_t)
+#np.save('alpha_t.npy',alp_t)
 #alp = np.load('alpha.npy')
 #alp_t = np.load('alpha_t.npy')
 #print('alps -> ', alp.itemsize, alp_t.itemsize)
-#print('alps done')
+print('alps done')
 
 #alpha_mul_old = contract('qipG,qjrG->ipjr',ALPHA_FULL,ALPHA_FULL_T)
 
@@ -235,32 +259,28 @@ print('Hamiltonian done')
 #print()
 
 hamil_MF = HAMILTONIAN_MF
-st_time=time()
+#st_time=time()
 h2_af_MF_sub = A_af_MF_sub(PSI_T_up_0,PSI_T_up,hamil.two_body,ql)
-#h2_af_MF_sub = np.load('H2_af.npy') #A_af_MF_sub(PSI_T_up_0,PSI_T_up,hamil.two_body,ql)
-#np.save('H2_af_intl.npy',h2_af_MF_sub)
-print('HF time = ', time()-st_time)
-print('HF done')
-st_time=time()
-hamil_MF.zero_body = H_0_mf(PSI_T_up_0,PSI_T_up,hamil.two_body,h2_t,ql)
-print('h0 = ', hamil_MF.zero_body)
-hamil_MF.one_body = H_1_mf(PSI_T_up_0,PSI_T_up,hamil.two_body,h2_t,ql,hamil.one_body)
-alp = get_alpha_full(PSI_T_up,h2_af_MF_sub,ql)
-np.save('alpha_intl.npy',alp)
-print('alpha done')
-alp_t = get_alpha_full_t(PSI_T_up,h2_af_MF_sub,ql,m_q)
-print('alpha_t done')
-np.save('alpha_t_intl.npy',alp_t)
+##h2_af_MF_sub = np.load('H2_af.npy') #A_af_MF_sub(PSI_T_up_0,PSI_T_up,hamil.two_body,ql)
+##np.save('H2_af_intl.npy',h2_af_MF_sub)
+#print('HF time = ', time()-st_time)
+#print('HF done')
+#st_time=time()
 
-#hamil_MF.two_body_e = gen_A_e_full(h2_af_MF_sub)
-#hamil_MF.two_body_o = gen_A_o_full(h2_af_MF_sub)
+#hamil_MF.zero_body = H_0_mf(PSI_T_up_0,PSI_T_up,hamil.two_body,h2_t,ql)
+hamil_MF.zero_body = mean_field(h2, num_electrons_up, num_orb)
+#
+#print('h0 = ', hamil_MF.zero_body)
+hamil_MF.one_body = H_1_mf(PSI_T_up_0,PSI_T_up,hamil.two_body,h2_t,ql,hamil.one_body)
+hamil_MF.two_body_e = gen_A_e_full(h2_af_MF_sub)
+
+hamil_MF.two_body_o = gen_A_o_full(h2_af_MF_sub)
 #print('h_e -> ', hamil_MF.two_body_e.itemsize, hamil_MF.two_body_o.itemsize)
 #del(hamil)
 
-#ALPHA_E = contract('ip,prG->irG',PSI_T_up.T,hamil_MF.two_body_e)
+ALPHA_E = contract('ip,prG->irG',PSI_T_up.T,hamil_MF.two_body_e)
 #np.save('a_e_intl.npy',ALPHA_E)
-#ALPHA_O = contract('ip,prG->irG',PSI_T_up.T,hamil_MF.two_body_o)
-
+ALPHA_O = contract('ip,prG->irG',PSI_T_up.T,hamil_MF.two_body_o)
 #np.save('a_o_intl.npy',ALPHA_O)
 #ALPHA_E = np.load('a_e.npy') #np.einsum('ip,prG->irG',PSI_T_up.T,hamil_MF.two_body_e)
 #ALPHA_O = np.load('a_o.npy') #np.einsum('ip,prG->irG',PSI_T_up.T,hamil_MF.two_body_o)
@@ -283,16 +303,10 @@ np.save('alpha_t_intl.npy',alp_t)
 #expr_hart_new = contract_expression('Nri,Npj,irjp->N',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),ALPHAs_MUL,constants=[2],optimize='greedy')
 #expr_hart_new_new = contract_expression('Nri,irG,Npj,jpG->N',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp,(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp_t,constants=[1,3],optimize='greedy')
 #print('expr_hart_new time = ', time()-st_time)
-#expr_h2_e = contract_expression('ijG,GN->ijN',hamil_MF.two_body_e,(num_g,NUM_WALKERS),constants=[0],optimize='greedy')
-#expr_h2_o = contract_expression('ijG,GN->ijN',hamil_MF.two_body_o,(num_g,NUM_WALKERS),constants=[0],optimize='greedy')
-#expr_fb_e = contract_expression('Nri,irG->NG',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),ALPHA_E,constants=[1],optimize='greedy')
-#expr_fb_o = contract_expression('Nri,irG->NG',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),ALPHA_O,constants=[1],optimize='greedy')
-
-#ALPHA = contract('ip,prG->irG',PSI_T_up.T,hamil_MF.two_body)
-expr_h2 = contract_expression('ijG,GN->ijN',h2_af_MF_sub,(num_g,NUM_WALKERS),constants=[0],optimize='greedy')
-expr_fb = contract_expression('Nri,irG->NG',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp,constants=[1],optimize='greedy')
-
-
+expr_h2_e = contract_expression('ijG,GN->ijN',hamil_MF.two_body_e,(num_g,NUM_WALKERS),constants=[0],optimize='greedy')
+expr_h2_o = contract_expression('ijG,GN->ijN',hamil_MF.two_body_o,(num_g,NUM_WALKERS),constants=[0],optimize='greedy')
+expr_fb_e = contract_expression('Nri,irG->NG',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),ALPHA_E,constants=[1],optimize='greedy')
+expr_fb_o = contract_expression('Nri,irG->NG',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),ALPHA_O,constants=[1],optimize='greedy')
 
 expr_exch_new_new = contract_expression('Nri,jrG,Npj,ipG->N',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp,(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp_t,constants=[1,3],optimize='greedy')
 expr_hart_new_new = contract_expression('Nri,irG,Npj,jpG->N',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp,(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),alp_t,constants=[1,3],optimize='greedy')

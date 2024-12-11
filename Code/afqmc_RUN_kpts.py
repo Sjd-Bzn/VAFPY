@@ -59,27 +59,26 @@ if first_cpu:
 
     print()
     print('###########################')
-    print('Rading and Reshaping Hamiltonian')
+    print('Rading Hamiltonian...')
 
-np.random.seed(15462)
+#np.random.seed(15462)
 
-if first_cpu:
-    hamil = HAMILTONIAN
-############################################
+hamil = HAMILTONIAN
+###########################################
 
 ####### reshape the H1.npy and H2.npy ######
 
 ############################################
 ### H1
-    H1 = np.array(read_datafile(input_file_one_body_hamil),dtype=np.complex128)
-    h1 = reshape_H1(H1, num_k, num_orb)
-    hamil.one_body = h1
+H1 = np.array(read_datafile(input_file_one_body_hamil),dtype=np.complex128)
+h1 = reshape_H1(H1, num_k, num_orb)
+hamil.one_body = h1
 ### H2
-    H2 = np.array(read_datafile(input_file_two_body_hamil),dtype=np.complex128)
-    h2 = reshape_H2(H2, num_k)
-    hamil.two_body = h2
+H2 = np.array(read_datafile(input_file_two_body_hamil),dtype=np.complex128)
+h2 = H2#np.moveaxis(H2, 0, -1) 
+hamil.two_body = h2
 #### H2 dager
-    h2_t = np.einsum('rpG->prG', hamil.two_body.conj())
+h2_t = np.einsum('prG->rpG', hamil.two_body.conj())
 
 
 if first_cpu:
@@ -96,7 +95,7 @@ if first_cpu:
 
     print('H1.npy shape -> ', H1.shape)
     print('H2.npy shape -> ', H2.shape)
-    
+
     print( 'After reshaping ')
     print()
     print('h1 shape -> ', hamil.one_body.shape)
@@ -109,6 +108,8 @@ if first_cpu:
     print()
     print('###########################')
     print()
+
+
 
     ###################################################
     #
@@ -151,18 +152,31 @@ if first_cpu:
     print('MF SUB in progress...')
 hamil_MF = HAMILTONIAN_MF
 h2_af_MF_sub = A_af_MF_sub(PSI_T_up_0,PSI_T_up,hamil.two_body,ql)
+#hamil_MF.two_body = A_af_MF_sub(PSI_T_up_0,PSI_T_up,hamil.two_body,ql)
+
 #h2_af_MF_sub_new = A_af_MF_sub_new(PSI_T_up,hamil.two_body,ql)
 #h2_af_MF_sub = np.load('H2_af.npy')
+#h2_af_MF_sub_new_t = np.einsum('rpG->prG', h2_af_MF_sub_new.conj())
 
-H_zero = H_0_mf(PSI_T_up_0,PSI_T_up,hamil.two_body,h2_t,ql)
+L_0 = mean_field(hamil.two_body, num_electrons_up, num_orb)
+
+
+H_zero= np.einsum("g, g->", L_0, L_0 )/2/2/num_k
+print("H_0", H_zero)
+#hamil_MF.zero_body = # H_0_mf(PSI_T_up_0,PSI_T_up,hamil.two_body,h2_t,ql)
+hamil_MF.zero_body= H_zero
+print("H_zero", H_zero)
+
 
 hamil_MF.one_body = H_1_mf(PSI_T_up_0,PSI_T_up,hamil.two_body,h2_t,ql,hamil.one_body)
 #H1_exp = expm(H_1_self)
 #H1_self_half_exp = expm(H_1_self/2)
-'''
+
+
 hamil_MF.two_body_e = gen_A_e_full(h2_af_MF_sub)
 hamil_MF.two_body_o = gen_A_o_full(h2_af_MF_sub)
 #print(np.round(hamil_MF.two_body_o[1,:,:,1],4))
+
 if first_cpu:
     print('Checking the averages of AeQs and AoQs after mean-filed subtraction...')
 for qc in range(1,num_k+1):
@@ -171,17 +185,18 @@ for qc in range(1,num_k+1):
         print('min(avg_Ae_Q) = ', min(avg_A_Q(PSI_T_up_0,PSI_T_up,hamil_MF.two_body_e,ql,qc)))
         print('max(avg_Ao_Q) = ', max(avg_A_Q(PSI_T_up_0,PSI_T_up,hamil_MF.two_body_o,ql,qc)))
         print('min(avg_Ao_Q) = ', min(avg_A_Q(PSI_T_up_0,PSI_T_up,hamil_MF.two_body_o,ql,qc)))
-'''
+
 if first_cpu:
     print('MF SUB completed.')
     print()
-
     print()
     print('##########################')
     print('Self-energy calculation in progress...')
-#h_self = -contract('ijG,jkG->ik',hamil.two_body,h2_t)/2#/num_k
-#H_1_self = -D_TAU * (hamil_MF.one_body+h_self)
-#del(h_self)
+h_self = -contract('ijG,jkG->ik',hamil.two_body,h2_t)/2#/num_k
+H_1_self = -D_TAU * (hamil_MF.one_body+h_self)
+H1_self_exp = expm(H_1_self)
+H1_self_half_exp = expm(H_1_self/2)
+del(h_self)
 if first_cpu:
     print('Self-energy calculation completed.')
     print()
@@ -212,11 +227,25 @@ walkers = WALKERS
 #ALPHA_FULL_T = get_alpha_full_t(PSI_T_up,h2_t,ql,m_q)
 #ALPHA_FULL_T = get_alpha_full_t(PSI_T_up,h2_t,ql,m_q)
 #print("alpha_full_t: Memory size of numpy array in bytes:",ALPHA_FULL_T.size * ALPHA_FULL_T.itemsize/1e09)
-
 #energy = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,hamil.two_body,h2_t,ql,m_q,ALPHA_FULL,ALPHA_FULL_T,comm)
 energy_time_st = time()
-energy = energy_new = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
+#one_body_energy = E_one(PSI_T_up, walkers.weights, walkers.mats_up, hamil.one_body)/num_k 
+#hartree = Hartree(PSI_T_up, walkers.weights, walkers.mats_up)/num_k
+#exchange = (Exchange(PSI_T_up, walkers.weights, walkers.mats_up)/num_k)
+#energy = energy_new 
+a = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,0)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
+energy = energy_new = a[0]
+one_body_energy = E_one(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body) 
+hartree = Hartree(PSI_T_up,walkers.weights,walkers.mats_up)
+exchange = Exchange(PSI_T_up,walkers.weights,walkers.mats_up)
+E1_vasp = EBANDS - 2 * hartree - 2* exchange
+
+
+
+
 print('energy time = ', time()-energy_time_st)
+
+
 
 #t1=time()
 #energy_test = measure_E_gs_new(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)#,alp,alp_t)#,comm)
@@ -224,7 +253,13 @@ print('energy time = ', time()-energy_time_st)
 
 #energy = 19.95523419043512*num_k+2*num_electrons_up*num_electrons_up*num_k*fsg*num_k 
 if first_cpu:
-    print('HF energy from new local energy routines = ', energy/num_k-2*num_electrons_up*num_electrons_up*num_k*fsg)
+    print('H1 Energy from AFQMC = ', one_body_energy)
+    print('H1 Energy from Vasp  = ', E1_vasp)
+    print('Hartree Energy       = ', hartree)
+    print('Exchange Energy      = ', exchange)
+    print('HF energy from AFQMC = ', energy)
+  #  print('HF energy from new local energy routines = ', energy_2/num_k-2*num_electrons_up*num_electrons_up*num_k*fsg)
+
 
 if HF_TEST==True:
     if first_cpu:
@@ -244,23 +279,20 @@ if HF_TEST==True:
         print()
         print(' tau                e_Hf                       d_e',)
         print('===================================================')
-
-    HF_TEST_H_1_self = -HF_TEST_tau * (hamil_MF.one_body+h_self)
+    HF_TEST_H_1_self =-HF_TEST_tau * (h_self +hamil_MF.one_body )
     for mul in range(0,HF_TEST_steps):
-        for i in range(0,NUM_WALKERS):
-            walkers.mats_up[i] = np.dot(propagator_fp(hamil_MF, HF_TEST_H_1_self,HF_TEST_tau,0),walkers.mats_up[i])
         val=np.array([])
-        for walker_mat in walkers.mats_up:
-            out = average_Hamil(hamil_MF, HF_TEST_H_1_self, PSI_T_up, walker_mat, NUM_WALKERS, HF_TEST_tau, 0, mul+2)
+        for i in range(0,NUM_WALKERS):
+        #    walkers.mats_up[i] = np.dot(propagator_fp(hamil_MF, HF_TEST_H_1_self,HF_TEST_tau,0),walkers.mats_up[i])
+        #for walker_mat in walkers.mats_up:
+            #out = average_Hamil(hamil_MF, hamil_MF.one_body, PSI_T_up, walkers.mats_up[i], NUM_WALKERS, HF_TEST_tau, 0, 1)
+            out = average_Hamil(hamil_MF, HF_TEST_H_1_self, PSI_T_up, walkers.mats_up[i], NUM_WALKERS, HF_TEST_tau, 0, 1)
             val=np.append(val,out)
         res = np.mean(val)
         std_err = np.std(val)/np.sqrt(len(val)-1)
         txt = str(HF_TEST_tau*(mul+1)) + '\t' + str(res/num_k-2*num_k*num_electrons_up*num_electrons_up*fsg) + '\t' + str(std_err) + '\n'
         print (txt)
 
-energy_new = energy
-e_hf=energy
-e_hf_1 = e_hf
 j = 1
 wr_name='WALKERS.npy'
 wt_name='WEIGHT.npy'
@@ -268,16 +300,19 @@ file_exists = exists(wr_name)
 if file_exists:
     walkers.mats_up=np.load(wr_name)
     walkers.weights=np.load(wt_name)
-    energy_new = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)
+    a = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,0)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
+    energy_new = a[0]
     if first_cpu:
-        print(energy_new/num_k-2*num_k*num_electrons_up*num_electrons_up*fsg)
+        print(energy_new)#-2*num_k*num_electrons_up*num_electrons_up*fsg)
         #print('HF energy from test local energy routines = ', energy_test/num_k-2*num_electrons_up*num_electrons_up*num_k*fsg)
-e_hf=energy_new
+#energy_new = energy
+e_hf = energy_new
+b = a[1]
+c = a[2]
 if file_exists:
     file_out = open(output_file,"a")
 else:
     file_out = open(output_file,"w")
-
 if first_cpu:
     print()
     print('###########################')
@@ -291,16 +326,14 @@ while (j<NUM_STEPS+1):
     old_walkers_up = walkers.mats_up
     old_weights = walkers.weights
     update_time_st=time()
-    walkers.mats_up,walkers.weights = update_walker(PSI_T_up_0,PSI_T_up,walkers.mats_up,walkers.weights,ql,H_zero,hamil_MF.one_body,D_TAU,e_hf,update_method)
-    #print('walkers.mats_up,walkers.weights ', walkers.mats_up.itemsize,walkers.weights.itemsize)
-    #print('walkers.weights = ', walkers.weights)
-    #print('np.sum(walkers.weights) = ', np.sum(walkers.weights))
-    walkers.weights=walkers.weights/np.sum(walkers.weights)
-    #print('walkers.weights = ', walkers.weights)
-    #print('np.sum(walkers.weights) = ', np.sum(walkers.weights))
-    print('update time = ', time()-update_time_st)
-    #for l in range (0, NUM_WALKERS):
-        #walkers.mats_up[l] = reortho_qr(walkers.mats_up[l])
+    #walkers.mats_up,walkers.weights = update_walker(PSI_T_up_0,PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,0,update_method)
+    #a=  measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,0)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
+    #energy_new= a[0]
+    #print('energy before update', energy_new)
+    walkers.mats_up,walkers.weights = update_hyb(PSI_T_up_0, PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator)
+ 
+
+    #walkers.weights=walkers.weights/np.sum(walkers.weights)
     if j%CHECK_PERIODICITY==0:
         np.save(wr_name,walkers.mats_up)
         np.save(wt_name,walkers.weights)
@@ -309,29 +342,27 @@ while (j<NUM_STEPS+1):
     #walkers.mats_up,walkers.weights = update_fp(PSI_T_up_0,PSI_T_up,walkers.mats_up,walkers.weights,ql,hamil_MF,H_1_self,D_TAU,e_hf,hamil,h2_t,ALPHA_E,ALPHA_O)
     #energy_new = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,hamil.two_body,h2_t,ql,m_q,ALPHA_FULL,ALPHA_FULL_T,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
     if j%SAMP_FREQ==0:
-        energy_time_st = time()
-        
-        
-        #energy_new = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
-        energy_new = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil_MF.one_body)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
-        
-        
-        
-        print('energy time = ', time()-energy_time_st)
-        #t1=time()
-        #energy_new_test = measure_E_gs_new(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)#alp,alp_t)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
-        #print('energy test time = ', time()-t1)
-        #print('???',energy_new,energy_new_test)
+        t1=time()
+        a=  measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,e_hf)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
+        energy_new= a[0]
+        b = a[1]
+        c = a[2]
+#        e_one_new =  E_one(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)
+#        hartree_new = Hartree(PSI_T_up,walkers.weights,walkers.mats_up)
+#        exchange_new = Exchange(PSI_T_up,walkers.weights,walkers.mats_up)
+#
 
-    if abs(energy.imag)<abs(trsh_imag) and abs(energy.real-e_hf.real)<abs(trsh_real) :#ratio*(energy.real+en_const))):# and (abs((energy.real-e_hf.real)/(en_const+e_hf.real))<MAX_ACC_VAL):
-        e_hf=e_hf*j+energy_new
-        e_hf = e_hf/(j+1)
+        print('energy test time = ', time()-t1)
+
+    if abs(energy.imag)<abs(trsh_imag) and abs(energy.real-e_hf.real)<abs(trsh_real): #ratio*(energy.real+en_const))):# and (abs((energy.real-e_hf.real)/(en_const+e_hf.real))<MAX_ACC_VAL):
+        e_hf = e_hf *j +energy_new
+        e_hf = e_hf /(j+1)
         if first_cpu:
-            print(j*D_TAU, e_hf/num_k-2*num_k*num_electrons_up*num_electrons_up*fsg)
-            txt = str(j*D_TAU) + '\t' + str(energy_new.real/num_k-2*num_k*num_electrons_up*num_electrons_up*fsg) + '\t' + str(energy_new.imag) + '\n'
+            print(j*D_TAU, e_hf)#, e_one_new, hartree_new, exchange_new)
+            txt = str(j*D_TAU) + '\t' + str(energy_new.real) + '\t' + str(energy_new.imag) + '\t' + str(b.real) + '\t' + str(c.real) + '\n' #+ str(exchange_new.real) + '\n'
             file_out.write(txt)
             print()
-        #print('NUM_WALKERS = ', NUM_WALKERS)
+       
         if j%REORTHO_PERIODICITY == 0:
             for i in range (0, NUM_WALKERS):
                 walkers.mats_up[i] = reortho_qr(walkers.mats_up[i])
@@ -361,9 +392,10 @@ while (j<NUM_STEPS+1):
 
 
 # Check if the simulation has exceeded the maximum runtime (TMAX)
-    if time() - start_time > MAX_RUN_TIME:
-        print(f"Simulation stopped early at step {step} due to reaching TMAX.")
-        break
+#    if time() - start_time > MAX_RUN_TIME:
+#        print(f"Simulation stopped early at step {step} due to reaching TMAX.")
+#        break
+
 
 file_out.close()
     
@@ -392,18 +424,20 @@ file_out.close()
 if first_cpu:
    print()
 
-# Output to the additional file
-E_gs = f"test_{comm.Get_size()}.txt"
-with open(E_gs, 'w') as gs_file:
-    if first_cpu:
-        gs_file.write("\nCalculating ground state energy...\n\n")
-        gs_file.write(f'E_gs_afqmc = {np.mean(data[st:en])} ± {np.sqrt(max(a[1]))}\n')
-        gs_file.write(f'Block mean = {a[2]}\n')
-        gs_file.write(f'Block size = {a[0]}\n')
-        gs_file.write(f'Variance = {a[1]}\n')
 
 if first_cpu:
-   print()
+    with open('output.txt', 'a') as file_out:
+        print(file=file_out)
+        print('Calculating ground state energy...', file=file_out)
+        print(file=file_out)
+        print('E_gs_afqmc = ', np.mean(data[st:en]), '+-', np.sqrt(max(a[1])), file=file_out)
+        print('total runtime = ', -start_time+time(), file=file_out)
+ 
+
+
+
+#if first_cpu:
+#   print()
 
 #v, blockVar, blockMean = blockAverage(data[st:en])
 #import matplotlib.pyplot as plt

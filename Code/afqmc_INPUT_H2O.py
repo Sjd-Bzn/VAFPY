@@ -24,6 +24,7 @@ en_const =  inputs["ECONST"]                            #nuclear energy from the
 
 SPIN =inputs.get("SPIN", 0)
 
+EBANDS = inputs.get("EBANDS", 0)
 
 
 MAX_RUN_TIME =inputs.get("TMAX", 184800)
@@ -41,8 +42,10 @@ NUM_STEPS =inputs.get("NSTP", 1000)
 comm = MPI.COMM_WORLD
 size = comm.Get_size()
 NUM_WALKERS=NUM_WALKERS//size
-
+rank = comm.Get_rank()
+base_seed = 42
 propagator = inputs["PROPAG"]
+
 
 order_trunc =inputs.get("OTEY", 6)                                     ### exp_Taylor (matrics to ex)
 
@@ -72,7 +75,7 @@ SVD =inputs.get("SVD",False)
 if SVD==True:
     svd_trshd = inputs.get("SVDT", 1e-3)
 
-svd_trshd = inputs.get("SVDT", 1e-3)
+svd_trshd = inputs.get("SVDT", 1e-5)
 
 
 HF_TEST = inputs.get("HF", False)                                    #### HF_TEST
@@ -86,7 +89,7 @@ num_k =inputs.get("KPOINT", 1)                                               ###
 fsg = inputs.get("FSG", 0)
 
 input_file_one_body_hamil = 'H1.npy'
-input_file_two_body_hamil = 'H2.npy'
+input_file_two_body_hamil = 'H2_zip.npy'
 q_list = 'Q_list.npy'
 
 
@@ -115,15 +118,13 @@ PSI_T_up_0 = PSI_T_down_0 = np.eye(num_orb)[:,0:num_electrons_up]
 PSI_T_up = PSI_T_up_0
 
 PSI_T_down = PSI_T_down_0
-
 for i in range (1,num_k):
     PSI_T_up = block_diag(PSI_T_up,PSI_T_up_0)
     PSI_T_down = block_diag(PSI_T_down,PSI_T_down_0)
 
 
-
 if SPIN==0:
-    output_file = 'AFQMC_CS_num_k'+str(num_k)+'_'+system+'_'+str(UPDATE_METHOD)+'_Reortho_'+str(REORTHO_PERIODICITY) +'_Rebal_'+str(REBAL_PERIODICITY)+'_TAU_'+str(D_TAU)+'.txt'
+    output_file = 'AFQMC_CS_num_k'+str(num_k)+'_samp_freq_'+str(SAMP_FREQ)+'_Reortho_'+str(REORTHO_PERIODICITY) +'_Rebal_'+str(REBAL_PERIODICITY)+'_TAU_'+str(D_TAU)+'_walkers_'+str(NUM_WALKERS)+'.txt'
     
 elif SPIN==1:
     output_file = 'AFQMC_SP_num_k'+str(num_k)+'_'+system+'_'+str(UPDATE_METHOD)+'_Reortho_'+str(REORTHO_PERIODICITY) +'_Rebal_'+str(REBAL_PERIODICITY)+'_TAU_'+str(D_TAU)+'.txt'
