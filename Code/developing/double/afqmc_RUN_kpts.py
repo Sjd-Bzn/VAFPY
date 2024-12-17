@@ -71,23 +71,22 @@ hamil = HAMILTONIAN
 
 ############################################
 ### H1 double
-H1 = np.array(read_datafile(input_file_one_body_hamil))#,astype=np.complex128)
+H1 = np.array(read_datafile(input_file_one_body_hamil))
+#print("H1 type", H1.dtype)
 h1 = reshape_H1(H1, num_k, num_orb)
+#h1 = h1.astype(np.complex64)
 hamil.one_body = h1
-### H1 single
-#H1 = np.array(read_datafile(input_file_one_body_hamil))#,astype=np.complex128)
-h1_sing = h1.astype(np.complex64)#reshape_H1(H1, num_k, num_orb)
-
-### H2 double
-H2 = np.array(read_datafile(input_file_two_body_hamil))#,astype=np.complex128)
+H2 = np.array(read_datafile(input_file_two_body_hamil))
 h2 = H2#np.moveaxis(H2, 0, -1) 
 hamil.two_body = h2
+#print("H2 type", H2.dtype)
+
 #### H2 dager
 h2_t = np.einsum('prG->rpG', hamil.two_body.conj())
-##### H2 single
-h2_sing = h2.astype(np.complex64)
-h2_sing_t = np.einsum('prG->rpG', h2_sing.conj())
- 
+print("H2 t type", h2_t.dtype)
+
+
+
 if first_cpu:
     print('Hamiltonian constructed Successfully')
     print()
@@ -194,32 +193,6 @@ hamil_MF.two_body_e = gen_A_e_full(h2_af_MF_sub)
 hamil_MF.two_body_o = gen_A_o_full(h2_af_MF_sub)
 #print(np.round(hamil_MF.two_body_o[1,:,:,1],4))
 
-####### single
-
-h2_af_MF_sing = A_af_MF_sub(PSI_T_up_0,PSI_T_up,h2_sing,ql)
-#hamil_MF.two_body = A_af_MF_sub(PSI_T_up_0,PSI_T_up,hamil.two_body,ql)
-
-#h2_af_MF_sub_new = A_af_MF_sub_new(PSI_T_up,hamil.two_body,ql)
-#h2_af_MF_sub = np.load('H2_af.npy')
-#h2_af_MF_sub_new_t = np.einsum('rpG->prG', h2_af_MF_sub_new.conj())
-
-L_0_sing = mean_field(h2_sing, num_electrons_up, num_orb)
-
-
-H_zero_sing= np.einsum("g, g->", L_0_sing, L_0_sing )/2/2/num_k
-print("H_0", H_zero)
-#hamil_MF.zero_body = # H_0_mf(PSI_T_up_0,PSI_T_up,hamil.two_body,h2_t,ql)
-
-
-
-hamil_MF.one_body_sing = H_1_mf(PSI_T_up_0,PSI_T_up,h2_sing,h2_sing_t,ql,h1_sing)
-#H1_exp = expm(H_1_self)
-#H1_self_half_exp = expm(H_1_self/2)
-
-
-hamil_MF.two_body_sing_e = gen_A_e_full(h2_af_MF_sing)
-hamil_MF.two_body_sing_o = gen_A_o_full(h2_af_MF_sing)
-#
 if first_cpu:
     print('Checking the averages of AeQs and AoQs after mean-filed subtraction...')
 for qc in range(1,num_k+1):
@@ -240,11 +213,6 @@ H_1_self = -D_TAU * (hamil_MF.one_body+h_self)
 H1_self_exp = expm(H_1_self)
 H1_self_half_exp = expm(H_1_self/2)
 del(h_self)
-h_self_sing = -contract('ijG,jkG->ik',h2_sing,h2_sing_t)/2#/num_k
-H_1_self_sing = -D_TAU * (hamil_MF.one_body_sing+h_self_sing)
-H1_self_exp_sing = expm(H_1_self_sing)
-H1_self_half_exp_sing = expm(H_1_self_sing/2)
-del(h_self_sing)
 
 if first_cpu:
     print('Self-energy calculation completed.')
@@ -358,10 +326,20 @@ if file_exists:
 e_hf = energy_new
 b = a[1]
 c = a[2]
+time_file = "times.txt"
+if file_exists:
+    t = open(time_file,"a")
+else:
+    t = open(time_file,"w")
+
 if file_exists:
     file_out = open(output_file,"a")
 else:
     file_out = open(output_file,"w")
+
+
+
+
 if first_cpu:
     print()
     print('###########################')
@@ -369,29 +347,25 @@ if first_cpu:
     print('AFQMC simulation...')
     print()
 num_rare = 0
+cumulative_energy_time = 0.0
+time_log_energy = []
+cumulative_update_time = 0.0
+time_log_update = []
+
+
 start_time = time()
 #update_method = set_update_method(UPDATE_METHOD)
 while (j<NUM_STEPS+1):
-    walkers_up_sing = walkers.mats_up.astype(np.complex64)
-    weights_sing = walkers.weights.astype(np.complex64)
-    update_time_st=time()
-    #walkers.mats_up,walkers.weights = update_walker(PSI_T_up_0,PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,0,update_method)
-    #a=  measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,0)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
-    #energy_new= a[0]
-    #print('energy before update', energy_new)
-    #print('walkers before', walkers.mats_up.dtype) 
-    #print('weights before', walkers.weights.dtype) 
-    start_time = time()
-    walkers.mats_up_sing,walkers.weights_sing = update_hyb_sing(PSI_T_up_0, PSI_T_up,walkers_up_sing,weights_sing,ql,0,h1_sing,D_TAU,0,H1_self_half_exp_sing,propagator)
-    time_sing = time() - start_time
-    print(f"prop sing time: {time_sing:.6f} second")
-    s_time = time()
-    walkers.mats_up_double,walkers.weights_double = update_hyb_double(PSI_T_up_0, PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator)
-    time_double = time() - s_time
-    print(f"prop double time: {time_double:.6f} second")
-    #print('wpropeights after', walkers.weights.dtype)
-    #print('walkers after', walkers.mats_up.dtype) 
-    #walkers.weights=walkers.weights/np.sum(walkers.weights)
+    s_update = time()
+    walkers.mats_up,walkers.weights = update_hyb(PSI_T_up_0, PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator)
+    time_update = time() - s_update
+    cumulative_update_time += time_update
+    time_log_update.append(time_update)  # Log the time per step
+
+    # Write the current step time and cumulative time to file
+    t.write(f"{j}\t{time_update:.6f}\t{cumulative_update_time:.6f}\t")
+
+  
     if j%CHECK_PERIODICITY==0:
         np.save(wr_name,walkers.mats_up)
         np.save(wt_name,walkers.weights)
@@ -400,27 +374,29 @@ while (j<NUM_STEPS+1):
     #walkers.mats_up,walkers.weights = update_fp(PSI_T_up_0,PSI_T_up,walkers.mats_up,walkers.weights,ql,hamil_MF,H_1_self,D_TAU,e_hf,hamil,h2_t,ALPHA_E,ALPHA_O)
     #energy_new = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,hamil.two_body,h2_t,ql,m_q,ALPHA_FULL,ALPHA_FULL_T,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
     if j%SAMP_FREQ==0:
-        t1=time()
+        t2=time()
         a=  measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,e_hf)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
-        t=  measure_E_gs(PSI_T_up,walkers.weights_sing,walkers.mats_up_sing,h1_sing,e_hf)#
-        exit() 
+        energy_time = time() - t2
+        cumulative_energy_time += energy_time
+        time_log_energy.append(energy_time)  # Log the time per step
+
+        # Write the current step time and cumulative time to file
+        t.write(f"{energy_time:.6f}\t{cumulative_energy_time:.6f}\n")
+        #print(f"Step: {j}, Time: {time_double:.6f} s, Cumulative Time: {cumulative_time_double:.6f} s")        
+
+
         energy_new= a[0]
         b = a[1]
         c = a[2]
-        sp_mean = a[3]
-        sp = a[4] 
-#        e_one_new =  E_one(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)
-#        hartree_new = Hartree(PSI_T_up,walkers.weights,walkers.mats_up)
-#        exchange_new = Exchange(PSI_T_up,walkers.weights,walkers.mats_up)
-#
-        print('energy test time = ', time()-t1)
+       
+        #print('energy test time = ', time()-t1)
     
     if abs(energy.imag)<abs(trsh_imag) and abs(energy.real-e_hf.real)<abs(trsh_real): #ratio*(energy.real+en_const))):# and (abs((energy.real-e_hf.real)/(en_const+e_hf.real))<MAX_ACC_VAL):
         e_hf = e_hf *j +energy_new
         e_hf = e_hf /(j+1)
         if first_cpu:
             print(j*D_TAU, e_hf)#, e_one_new, hartree_new, exchange_new)
-            txt = str(j*D_TAU) + '\t' + str(energy_new.real) + '\t' + str(energy_new.imag) + '\t' + str(b.real) + '\t' + str(c.real) + '\t' + str(sp_mean.real) + '\t' + str(sp.real)  + '\n' #+ str(exchange_new.real) + '\n'
+            txt = str(j*D_TAU) + '\t' + str(energy_new.real) + '\t' + str(energy_new.imag) + '\t' + str(b.real) + '\t' + str(c.real) +'\n' #+ str(exchange_new.real) + '\n'
             file_out.write(txt)
             print()
         if j%REORTHO_PERIODICITY == 0:
