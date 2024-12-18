@@ -35,9 +35,9 @@ class HAMILTONIAN_MF:
 
 @dataclass
 class WALKERS:
-    mats_up = np.array(NUM_WALKERS * [PSI_T_up], dtype=np.complex64).astype(np.complex64)  ### spinn up and down
-    mats_down = np.array(NUM_WALKERS * [PSI_T_down], dtype=np.complex64).astype(np.complex64)
-    weights = np.ones(NUM_WALKERS, dtype=np.complex64).astype(np.complex64)   ## initiate by PSI_I from DFT calculation which at first has weight = 1 and phase = 0  
+    mats_up = np.array(NUM_WALKERS * [PSI_T_up], dtype=np.complex64)### spinn up and down
+    mats_down = np.array(NUM_WALKERS * [PSI_T_down], dtype=np.complex64)
+    weights = np.ones(NUM_WALKERS, dtype=np.complex64) ## initiate by PSI_I from DFT calculation which at first has weight = 1 and phase = 0  
 
 def show_params():
     print('system = ', system)
@@ -458,7 +458,7 @@ def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h
             new_walker_mat[i] = prop_S2 @ walker_mat[i]
      #       print('h_2 type', h_2.dtype)
       #      print('h1  type', h1_exp_half.dtype)
-       #     print('walker type', new_walker_mat.dtype)
+            #print('walker type', new_walker_mat.dtype)
         #    print('prop s2 type', prop_S2.dtype)
         else:
             raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")

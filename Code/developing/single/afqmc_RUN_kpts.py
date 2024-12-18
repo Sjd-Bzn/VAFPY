@@ -354,13 +354,14 @@ time_log_energy = []
 cumulative_update_time = 0.0
 time_log_update = []
 
-
+#print('walkers.weights',  walkers.weights.dtype)
 
 start_time = time()
 #update_method = set_update_method(UPDATE_METHOD)
 while (j<NUM_STEPS+1):
     s_update = time()
-    walkers.mats_up,walkers.weights = update_hyb(PSI_T_up_0.astype(np.float32), PSI_T_up.astype(np.float32),walkers.mats_up,walkers.weights.astype(np.complex64),ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator)
+    walkers.weights = walkers.weights.astype(np.complex64)
+    walkers.mats_up,walkers.weights = update_hyb(PSI_T_up_0, PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator)
     time_update = time() - s_update
     cumulative_update_time += time_update
     time_log_update.append(time_update)  # Log the time per step
