@@ -339,7 +339,7 @@ while (j<NUM_STEPS+1):
     #a=  measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,0)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
     #energy_new= a[0]
     #print('energy before update', energy_new)
-    walkers.mats_up,walkers.weights = update_hyb(PSI_T_up_0, PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator)
+    walkers.mats_up,walkers.weights = update_hyb(inputs, PSI_T_up_0, PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp)
  
 
     #walkers.weights=walkers.weights/np.sum(walkers.weights)

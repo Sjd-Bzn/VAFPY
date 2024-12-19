@@ -386,7 +386,7 @@ def swap(a):
 
 #@profile
 
-def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h1_exp_half,propagator):
+def update_hyb(inputs,trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h1_exp_half):
     NG = num_g
     new_walker_mat = np.zeros_like(walker_mat)
     new_walker_weight = np.zeros_like(walker_weight)
@@ -398,10 +398,12 @@ def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h
 
     #fb_e_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, _e,optimize='greedy')
     #fb_o_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, alpha_full_o,optimize='greedy')
-
-    fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat) 
-    fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat)
-    
+    if inputs.get('PRECISION') == 'Single':
+        fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat).astype(np.complex64)
+        fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat).astype(np.complex64)
+    else: 
+        fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat)
+        fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat)
     ####Boundary condition for rare events  based on:https://doi.org/10.1103/PhysRevB.80.214116
 
     fb_e_Q[abs(fb_e_Q)>1] = 1.0
@@ -410,8 +412,12 @@ def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h
    #####################################################################################################
     #x_e_Q = rng.random(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
     #x_o_Q = rng.random(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-    x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-    x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+    if inputs.get("PRECISION", "") == 'Single':
+        x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS).astype(np.float32)
+        x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS).astype(np.float32)
+    else:
+        x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+        x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
 
 
 ##########################################################################################################################
@@ -431,10 +437,10 @@ def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h
 ##############################################################################################################################   
     h_2 = expr_h2_e(x_e_Q-fb_e_Q.T)+expr_h2_o(x_o_Q-fb_o_Q.T)  
     #h_2 = h_mf.two_body_e@(x_e_Q-fb_e_Q.T) + h_mf.two_body_o@(x_o_Q-fb_o_Q.T)
-    
+    print('H2 type', h_2.dtype) 
     for i in range(0,NUM_WALKERS):
         h= h_1 + SQRT_DTAU * 1j *h_2 [:,:,i]
-        if propagator == 'Old':
+        if inputs["PROPAG"] == 'Old':
             addend = walker_mat[i]
             for j in range(order_trunc+1):
                 new_walker_mat[i] += addend
@@ -443,16 +449,16 @@ def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h
         
 ########       Different propagators Taylor, S1, and S2
 
-        elif propagator == 'Taylor':
+        elif inputs["PROPAG"] == 'Taylor':
             prop_taylor = np.exp(d_tau * (-h_0 + e_0)) * exp_Taylor(h)
             new_walker_mat[i] = prop_taylor @ walker_mat[i]
         
-        elif propagator == 'S1':
+        elif  inputs["PROPAG"]  == 'S1':
             
             prop_S1 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1) * exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i])
             new_walker_mat[i] = prop_S1 @ walker_mat[i]
         
-        elif propagator == 'S2':
+        elif inputs["PROPAG"]  == 'S2':
             prop_S2 = h1_exp_half@exp_Taylor(SQRT_DTAU*1j*h_2[:,:,i])@h1_exp_half
             #prop_S2 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1 / 2) @ exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i]) @ expm(-d_tau * h_1 / 2)
             new_walker_mat[i] = prop_S2 @ walker_mat[i]

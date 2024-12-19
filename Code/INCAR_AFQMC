@@ -15,7 +15,7 @@
       PROPAG   : S2   ### S1, S2, Taylor
       EQLB     : 0.2
       DTAU     : 0.0005
-      NWAK     : 4800
+      NWAK     : 4
       NSTP     : 60000
       BLKDIV   : 10
       KPOINT   : 8
