@@ -16,8 +16,13 @@ from afqmc_alpha import expr_h2_o
 #from afqmc_alpha import ALPHA_O
 #from afqmc_alpha import expr_exch_new
 #from afqmc_alpha import expr_hart_new
-from afqmc_alpha import expr_hart_new_new
-from afqmc_alpha import expr_exch_new_new
+from afqmc_alpha import expr_hart_double
+from afqmc_alpha import expr_exch_double
+from afqmc_alpha import expr_hart_single
+from afqmc_alpha import expr_exch_single
+
+
+
 from afqmc_alpha import expr_fb_e
 from afqmc_alpha import expr_fb_o
 
@@ -35,9 +40,13 @@ class HAMILTONIAN_MF:
 
 @dataclass
 class WALKERS:
-    mats_up = np.array(NUM_WALKERS * [PSI_T_up], dtype=np.complex128)   ### spinn up and down
-    mats_down = np.array(NUM_WALKERS * [PSI_T_down], dtype=np.complex128)
-    weights = np.ones(NUM_WALKERS, dtype=np.complex128)   ## initiate by PSI_I from DFT calculation which at first has weight = 1 and phase = 0  
+    mats_up_single = np.array(NUM_WALKERS * [PSI_T_up], dtype=np.complex64)   ### spinn up and down
+    mats_down_single = np.array(NUM_WALKERS * [PSI_T_down], dtype=np.complex64)
+    weights_single = np.ones(NUM_WALKERS, dtype=np.complex64)   ## initiate by PSI_I from DFT calculation which at first has weight = 1 and phase = 0  
+    mats_up_double = np.array(NUM_WALKERS * [PSI_T_up], dtype=np.complex128)   ### spinn up and down
+    mats_down_double = np.array(NUM_WALKERS * [PSI_T_down], dtype=np.complex128)
+    weights_double = np.ones(NUM_WALKERS, dtype=np.complex128)   ## initiate by PSI_I from DFT calculation which at first has weight = 1 and phase = 0  
+
 
 def show_params():
     print('system = ', system)
@@ -386,24 +395,24 @@ def swap(a):
 
 #@profile
 
-def update_hyb(inputs,trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h1_exp_half):
+def update_hyb_single(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h1_exp_half,propagator):
     NG = num_g
+    walker_mat = walker_mat.astype(np.complex64)
+    walker_weight = walker_weight.astype(np.complex64)
     new_walker_mat = np.zeros_like(walker_mat)
     new_walker_weight = np.zeros_like(walker_weight)
     theta_mat = []
-    for i in range(NUM_WALKERS):
+    for i in range(len(walker_mat)):
         theta_mat.append(theta(trial, walker_mat[i]))
     theta_mat=np.array(theta_mat)
-    
+    theta_mat = theta_mat.astype(np.complex64) 
 
     #fb_e_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, _e,optimize='greedy')
     #fb_o_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, alpha_full_o,optimize='greedy')
-    if inputs.get('PRECISION') == 'Single':
-        fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat).astype(np.complex64)
-        fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat).astype(np.complex64)
-    else: 
-        fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat)
-        fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat)
+
+    fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat)
+    fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat)
+    
     ####Boundary condition for rare events  based on:https://doi.org/10.1103/PhysRevB.80.214116
 
     fb_e_Q[abs(fb_e_Q)>1] = 1.0
@@ -412,12 +421,8 @@ def update_hyb(inputs,trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_ta
    #####################################################################################################
     #x_e_Q = rng.random(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
     #x_o_Q = rng.random(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-    if inputs.get("PRECISION", "") == 'Single':
-        x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS).astype(np.float32)
-        x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS).astype(np.float32)
-    else:
-        x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-        x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+    x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS).astype(np.float32)
+    x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS).astype(np.float32)
 
 
 ##########################################################################################################################
@@ -437,10 +442,10 @@ def update_hyb(inputs,trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_ta
 ##############################################################################################################################   
     h_2 = expr_h2_e(x_e_Q-fb_e_Q.T)+expr_h2_o(x_o_Q-fb_o_Q.T)  
     #h_2 = h_mf.two_body_e@(x_e_Q-fb_e_Q.T) + h_mf.two_body_o@(x_o_Q-fb_o_Q.T)
-    print('H2 type', h_2.dtype) 
+    #print('h_2 type', h_2.dtype)
     for i in range(0,NUM_WALKERS):
-        h= h_1 + SQRT_DTAU * 1j *h_2 [:,:,i]
-        if inputs["PROPAG"] == 'Old':
+        if propagator == 'Old':
+            h= h_1 + SQRT_DTAU * 1j *h_2 [:,:,i]
             addend = walker_mat[i]
             for j in range(order_trunc+1):
                 new_walker_mat[i] += addend
@@ -448,21 +453,24 @@ def update_hyb(inputs,trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_ta
 
         
 ########       Different propagators Taylor, S1, and S2
-
-        elif inputs["PROPAG"] == 'Taylor':
+        
+        elif propagator == 'Taylor':
             prop_taylor = np.exp(d_tau * (-h_0 + e_0)) * exp_Taylor(h)
             new_walker_mat[i] = prop_taylor @ walker_mat[i]
         
-        elif  inputs["PROPAG"]  == 'S1':
+        elif propagator == 'S1':
             
             prop_S1 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1) * exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i])
             new_walker_mat[i] = prop_S1 @ walker_mat[i]
         
-        elif inputs["PROPAG"]  == 'S2':
-            prop_S2 = h1_exp_half@exp_Taylor(SQRT_DTAU*1j*h_2[:,:,i])@h1_exp_half
-            #prop_S2 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1 / 2) @ exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i]) @ expm(-d_tau * h_1 / 2)
+        elif propagator == 'S2':
+            prop_S2 = h1_exp_half@exp_Taylor(SQRT_DTAU*1j*h_2[:, :, i])@h1_exp_half
+    #        prop_S2 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1 / 2) @ exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i]) @ expm(-d_tau * h_1 / 2)
             new_walker_mat[i] = prop_S2 @ walker_mat[i]
-        
+       #     print('h_2 type', h_2.dtype)
+       #     print('h1  type', h1_exp_half.dtype)
+       #     print('walker type', new_walker_mat.dtype)
+       #     print('prop s2 type', prop_S2.dtype)
         else:
             raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
 
@@ -473,6 +481,96 @@ def update_hyb(inputs,trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_ta
 ####new_weight
 
         new_walker_weight[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_e_Q[:,i],fb_e_Q[i])-np.dot(fb_e_Q[i],fb_e_Q[i]/2))*np.exp(np.dot(x_o_Q[:,i], fb_o_Q[i])-np.dot(fb_o_Q[i],fb_o_Q[i]/2))))* max(0,np.cos(alpha))*walker_weight[i]
+    #print('weight type', new_walker_weight.dtype)
+    return new_walker_mat, new_walker_weight
+
+def update_hyb_double(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h1_exp_half,propagator):
+    NG = num_g
+    #walker_mat = walker_mat.astype(np.complex64)
+    #walker_weight = walker_weight.astype(np.complex64)
+    new_walker_mat = np.zeros_like(walker_mat)
+    new_walker_weight = np.zeros_like(walker_weight)
+    theta_mat = []
+    for i in range(NUM_WALKERS):
+        theta_mat.append(theta(trial, walker_mat[i]))
+    theta_mat=np.array(theta_mat)
+    theta_mat = theta_mat 
+
+    #fb_e_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, _e,optimize='greedy')
+    #fb_o_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, alpha_full_o,optimize='greedy')
+
+    fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat)
+    fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat)
+    
+    ####Boundary condition for rare events  based on:https://doi.org/10.1103/PhysRevB.80.214116
+
+    fb_e_Q[abs(fb_e_Q)>1] = 1.0
+    fb_o_Q[abs(fb_o_Q)>1] = 1.0
+
+   #####################################################################################################
+    #x_e_Q = rng.random(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+    #x_o_Q = rng.random(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+    x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+    x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+
+
+##########################################################################################################################
+#    x_e_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(comm.Get_size(),NG,NUM_WALKERS)[comm.Get_rank()]
+#    x_o_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(comm.Get_size(),NG,NUM_WALKERS)[comm.Get_rank()]
+#    x_e_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(NG,NUM_WALKERS,comm.Get_size())[:,:,comm.Get_rank()]
+#    x_o_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(NG,NUM_WALKERS,comm.Get_size())[:,:,comm.Get_rank()]
+#    global first_call
+#    if first_call:
+#        first_call = False
+#    else:
+#        with open(f"size_{comm.Get_size()}_rank_{comm.Get_rank()}", "w") as f:
+#            for i in range(NUM_WALKERS):
+#                f.write(f"{comm.Get_size() * i + comm.Get_rank()} {x_e_Q[:,i]}\n")
+#        comm.barrier()
+#        exit()
+##############################################################################################################################   
+    h_2 = expr_h2_e(x_e_Q-fb_e_Q.T)+expr_h2_o(x_o_Q-fb_o_Q.T)  
+    #h_2 = h_mf.two_body_e@(x_e_Q-fb_e_Q.T) + h_mf.two_body_o@(x_o_Q-fb_o_Q.T)
+    #print('h_2 type', h_2.dtype)
+    for i in range(len(walker_mat)):
+        if propagator == 'Old':
+            h= h_1 + SQRT_DTAU * 1j *h_2 [:,:,i]
+            addend = walker_mat[i]
+            for j in range(order_trunc+1):
+                new_walker_mat[i] += addend
+                addend = h@addend/(j + 1)
+
+        
+########       Different propagators Taylor, S1, and S2
+        
+        elif propagator == 'Taylor':
+            prop_taylor = np.exp(d_tau * (-h_0 + e_0)) * exp_Taylor(h)
+            new_walker_mat[i] = prop_taylor @ walker_mat[i]
+        
+        elif propagator == 'S1':
+            
+            prop_S1 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1) * exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i])
+            new_walker_mat[i] = prop_S1 @ walker_mat[i]
+        
+        elif propagator == 'S2':
+            prop_S2 = h1_exp_half@exp_Taylor(SQRT_DTAU*1j*h_2[:, :, i])@h1_exp_half
+    #        prop_S2 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1 / 2) @ exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i]) @ expm(-d_tau * h_1 / 2)
+            new_walker_mat[i] = prop_S2 @ walker_mat[i]
+       #     print('h_2 type', h_2.dtype)
+       #     print('h1  type', h1_exp_half.dtype)
+       #     print('walker type', new_walker_mat.dtype)
+       #     print('prop s2 type', prop_S2.dtype)
+        else:
+            raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
+
+        ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i]))**2 / np.linalg.det(overlap(trial,walker_mat[i]))**2
+        ##ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i])) / np.linalg.det(overlap(trial,walker_mat[i]))
+        alpha = phase(ovrlap_ratio)
+
+####new_weight
+
+        new_walker_weight[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_e_Q[:,i],fb_e_Q[i])-np.dot(fb_e_Q[i],fb_e_Q[i]/2))*np.exp(np.dot(x_o_Q[:,i], fb_o_Q[i])-np.dot(fb_o_Q[i],fb_o_Q[i]/2))))* max(0,np.cos(alpha))*walker_weight[i]
+    #print('weight type', new_walker_weight.dtype)
     return new_walker_mat, new_walker_weight
 
 
@@ -547,7 +645,7 @@ def Hartree(trial,weights,walkers):#,alpha_full,alpha_full_t):#,comm):
     for i in range(NUM_WALKERS):
         thetas.append(theta(trial, walkers[i]))
     thetas=np.array(thetas)
-    har_list  =2*expr_hart_new_new(thetas,thetas) / num_k 
+    har_list  =2*expr_hart_double(thetas,thetas) / num_k 
     val=0
     for hartree, weight in zip(har_list, weights):
         val+=hartree*weight/comm.Get_size()
@@ -561,7 +659,7 @@ def Exchange(trial,weights,walkers):#,alpha_full,alpha_full_t):#,comm):
     for i in range(NUM_WALKERS):
         thetas.append(theta(trial, walkers[i]))
     thetas=np.array(thetas)
-    exch_list =(-expr_exch_new_new(thetas,thetas) - num_electrons_up*num_k*fsg)/num_k
+    exch_list =(-expr_exch_double(thetas,thetas) - num_electrons_up*num_k*fsg)/num_k
     val=0
     for exchange, weight in zip(exch_list, weights):
         val+=exchange*weight/comm.Get_size()
@@ -579,30 +677,62 @@ def measure_E_gs_1(trial,weights,walkers,h_1,num_k):#,alpha_full,alpha_full_t):#
     return e_locs/num_k, e1/num_k, har_list/num_k, exch_list/num_k
 
 
-def measure_E_gs(trial,weights,walkers,h_1,e_0):#,alpha_full,alpha_full_t):#,comm):
+def measure_E_gs_single(trial,weights,walkers,h_1,e_0):#,alpha_full,alpha_full_t):#,comm):
     thetas=[]
     for i in range(NUM_WALKERS):
         thetas.append(theta(trial, walkers[i]))
-    thetas=np.array(thetas)
-    b=np.dot(trial.T,h_1)
+    thetas=np.array(thetas).astype(np.complex64)
+    b=np.dot(trial.T,h_1).astype(np.complex64)
     e1=2*contract('iNi->N',np.tensordot(b, thetas,axes=((1,1)))) / num_k
-    har_list  = 2* expr_hart_new_new(thetas,thetas) / num_k
-    exch_list = (-expr_exch_new_new(thetas,thetas) - num_electrons_up * num_k *fsg)/num_k
+    har_list  = 2* expr_hart_single(thetas,thetas) / num_k
+    exch_list = (-expr_exch_single(thetas,thetas) - num_electrons_up * num_k *fsg)/num_k
     e_locs=e1+har_list+exch_list
-
+   # print('e_1 single', e1.dtype)
+   # print('har single', har_list.dtype)
+   # print('echange single', exch_list.dtype)
+   # print('e_locs single', e_locs.dtype)
+    weights = weights.astype(np.complex64)
+   # print(' weights single', weights.dtype)
 
     #if e_0!=0:
     #    e_locs[e_locs.real>e_0.real+np.sqrt(2./D_TAU)]=e_0+np.sqrt(2./D_TAU)
     #    e_locs[e_locs.real<e_0.real-np.sqrt(2./D_TAU)]=e_0-np.sqrt(2./D_TAU)
+    one_body=0
+    for e_one, weight in zip(e1, weights):
+        one_body+=e_one*weight
+    #print('val before', val, comm.Get_rank())
+    one_body_glb= comm.allreduce(one_body)/comm.Get_size()
+    #if comm.Get_rank()==0:
+    #print('val after', val_glb, comm.Get_rank())
+    sum_w = np.sum(weights)
+    #print('sum before', sum_w, comm.Get_rank())
+    sum_glb= comm.allreduce(sum_w)/comm.Get_size()
+    #print('sum after', sum_glb, comm.Get_rank())
 
-#    with open(f"energy_size_{comm.Get_size()}_rank_{comm.Get_rank()}", "w") as f:
-#        for i, (e_loc, weight) in enumerate(zip(e_locs, weights)):
-#            f.write(f"{i} {e_loc} {weight / comm.Get_size()}\n")
-#    global first_call
-#    if not first_call:
-#        comm.barrier()
-#        exit()
-#    first_call = False
+    har=0
+    for hartree, weight in zip(har_list, weights):
+        har+=hartree*weight
+    #print('val before', val, comm.Get_rank())
+    har_glb= comm.allreduce(har)/comm.Get_size()
+    #if comm.Get_rank()==0:
+    #print('val after', val_glb, comm.Get_rank())
+    sum_w = np.sum(weights)
+    #print('sum before', sum_w, comm.Get_rank())
+    sum_glb= comm.allreduce(sum_w)/comm.Get_size()
+    #print('sum after', sum_glb, comm.Get_rank())
+
+    exch=0
+    for exchange, weight in zip(exch_list, weights):
+        exch+=exchange*weight
+    #print('val before', val, comm.Get_rank())
+    exch_glb= comm.allreduce(exch)/comm.Get_size()
+    #if comm.Get_rank()==0:
+    #print('val after', val_glb, comm.Get_rank())
+    sum_w = np.sum(weights)
+    #print('sum before', sum_w, comm.Get_rank())
+    sum_glb= comm.allreduce(sum_w)/comm.Get_size()
+    #print('sum after', sum_glb, comm.Get_rank())
+
     val=0
     for e_loc, weight in zip(e_locs, weights):
         val+=e_loc*weight
@@ -614,7 +744,79 @@ def measure_E_gs(trial,weights,walkers,h_1,e_0):#,alpha_full,alpha_full_t):#,com
     #print('sum before', sum_w, comm.Get_rank())
     sum_glb= comm.allreduce(sum_w)/comm.Get_size()
     #print('sum after', sum_glb, comm.Get_rank())
-    return val_glb/sum_glb, val_glb, sum_glb
+    
+    return val_glb/sum_glb, val_glb, exch_glb, har_glb, one_body_glb, sum_glb
+
+def measure_E_gs_double(trial,weights,walkers,h_1,e_0):#,alpha_full,alpha_full_t):#,comm):
+    thetas=[]
+    for i in range(NUM_WALKERS):
+        thetas.append(theta(trial, walkers[i]))
+    thetas=np.array(thetas)
+    b=np.dot(trial.T,h_1)
+    e1=2*contract('iNi->N',np.tensordot(b, thetas,axes=((1,1)))) / num_k
+    har_list  = 2* expr_hart_double(thetas,thetas) / num_k
+    exch_list = (-expr_exch_double(thetas,thetas) - num_electrons_up * num_k *fsg)/num_k
+    e_locs=e1+har_list+exch_list
+
+   # print('e_1 double', e1.dtype)
+   # print('har double', har_list.dtype)
+   # print('echange double', exch_list.dtype)
+   # print('e_locs double', e_locs.dtype)
+   # print(' weights double', weights.dtype)
+
+    #if e_0!=0:
+    #    e_locs[e_locs.real>e_0.real+np.sqrt(2./D_TAU)]=e_0+np.sqrt(2./D_TAU)
+    #    e_locs[e_locs.real<e_0.real-np.sqrt(2./D_TAU)]=e_0-np.sqrt(2./D_TAU)
+    one_body=0
+    for e_one, weight in zip(e1, weights):
+        one_body+=e_one*weight
+    #print('val before', val, comm.Get_rank())
+    one_body_glb= comm.allreduce(one_body)/comm.Get_size()
+    #if comm.Get_rank()==0:
+    #print('val after', val_glb, comm.Get_rank())
+    sum_w = np.sum(weights)
+    #print('sum before', sum_w, comm.Get_rank())
+    sum_glb= comm.allreduce(sum_w)/comm.Get_size()
+    #print('sum after', sum_glb, comm.Get_rank())
+
+    har=0
+    for hartree, weight in zip(har_list, weights):
+        har+=hartree*weight
+    #print('val before', val, comm.Get_rank())
+    har_glb= comm.allreduce(har)/comm.Get_size()
+    #if comm.Get_rank()==0:
+    #print('val after', val_glb, comm.Get_rank())
+    sum_w = np.sum(weights)
+    #print('sum before', sum_w, comm.Get_rank())
+    sum_glb= comm.allreduce(sum_w)/comm.Get_size()
+    #print('sum after', sum_glb, comm.Get_rank())
+
+    exch=0
+    for exchange, weight in zip(exch_list, weights):
+        exch+=exchange*weight
+    #print('val before', val, comm.Get_rank())
+    exch_glb= comm.allreduce(exch)/comm.Get_size()
+    #if comm.Get_rank()==0:
+    #print('val after', val_glb, comm.Get_rank())
+    sum_w = np.sum(weights)
+    #print('sum before', sum_w, comm.Get_rank())
+    sum_glb= comm.allreduce(sum_w)/comm.Get_size()
+    #print('sum after', sum_glb, comm.Get_rank())
+
+    val=0
+    for e_loc, weight in zip(e_locs, weights):
+        val+=e_loc*weight
+    #print('val before', val, comm.Get_rank())
+    val_glb= comm.allreduce(val)/comm.Get_size()
+    #if comm.Get_rank()==0:
+    #print('val after', val_glb, comm.Get_rank())
+    sum_w = np.sum(weights)
+    #print('sum before', sum_w, comm.Get_rank())
+    sum_glb= comm.allreduce(sum_w)/comm.Get_size()
+    #print('sum after', sum_glb, comm.Get_rank())
+    
+    return val_glb/sum_glb, val_glb, exch_glb, har_glb, one_body_glb, sum_glb
+
 
 def update_fp(trial_0,trial,walker_mat,walker_weight,q_list,h_mf,h_1,d_tau,e_0,h_original,h2_dagger,alpha_full_e,alpha_full_o):
     h_0 = h_mf.zero_body
