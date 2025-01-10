@@ -13,22 +13,21 @@ def main():
         num_electron=4,
         singularity=0,
         comm=MPI.COMM_WORLD,
+        precision="foo",
     )
     hamiltonian = Hamiltonian(
         one_body=reshape_H1(config, np.load("H1.npy")),
         two_body=np.moveaxis(np.load("H2.npy"), 0, -1),
     )
-    trial_state = np.eye(config.num_orbital, config.num_electron)
-    hamiltonian.setup_energy_expressions(config, trial_state)
-    mats_up = np.array(config.num_walkers * [trial_state], dtype=np.complex64)
-    weights = np.ones(config.num_walkers, dtype=np.complex64)
+    trial_det, walkers = initialize_determinant(config)
+    hamiltonian.setup_energy_expressions(config, trial_det)
 
-    E = measure_E_gs_single(config, trial_state, weights, mats_up, hamiltonian)
+    E = measure_energy(config, trial_det, walkers, hamiltonian)
     expected = 631.88947 - 2.8974954e-09j
     print(E, np.isclose(E, expected))
     np.random.seed(1887431)
-    change = 0.05 * np.random.rand(*mats_up.shape)
-    E = measure_E_gs_single(config, trial_state, weights, mats_up + change, hamiltonian)
+    walkers.slater_det += 0.05 * np.random.rand(*walkers.slater_det.shape)
+    E = measure_energy(config, trial_det, walkers, hamiltonian)
     expected = 631.8965 - 0.009482565j
     print(E, np.isclose(E, expected))
 
@@ -41,6 +40,31 @@ class Configuration:
     num_electron: int  # number of occupied states
     singularity: float  # singularity used for the G=0 component (fsg)
     comm: MPI.Comm  # communicator over which the walkers are distributed
+    precision: str  # must be either single or double
+
+    @property
+    def float_type(self):
+        if self.precision == "single":
+            return np.single
+        elif self.precision == "double":
+            return np.double
+        else:
+            raise NotImplementedError(f"Specified precision {self.precision} not implemented.")
+
+    @property
+    def complex_type(self):
+        if self.precision == "single":
+            return np.csingle
+        elif self.precision == "double":
+            return np.cdouble
+        else:
+            raise NotImplementedError(f"Specified precision {self.precision} not implemented.")
+
+
+@dataclass
+class Walkers:
+    slater_det: np.typing.ArrayLike
+    weights: np.typing.ArrayLike
 
 
 @dataclass
@@ -51,15 +75,15 @@ class Hamiltonian:
     # two-body part of Hamiltonian after factorization,
     # expected shape (num_orbital, num_orbital * num_kpoint, num_g * num_kpoint)
 
-    def setup_energy_expressions(self, config, trial_state):
+    def setup_energy_expressions(self, config, trial_det):
         shape_theta = (
             config.num_walkers,
             config.num_orbital * config.num_kpoint,
             config.num_electron * config.num_kpoint,
         )
-        b = np.dot(trial_state.T, self.one_body).astype(np.complex64)
-        alp = np.einsum("pi, prg -> irg", trial_state, self.two_body)
-        alp_t = np.einsum("pi, rpg -> irg", trial_state, self.two_body.conj())
+        b = np.dot(trial_det.T, self.one_body).astype(np.complex64)
+        alp = np.einsum("pi, prg -> irg", trial_det, self.two_body)
+        alp_t = np.einsum("pi, rpg -> irg", trial_det, self.two_body.conj())
         alp_s = alp.astype(np.complex64)
         alp_s_t = alp_t.astype(np.complex64)
         self._one_body_expression = contract_expression(
@@ -87,6 +111,15 @@ class Hamiltonian:
         return -self._exchange_expression(theta, theta) - self._singularity_correction
 
 
+def initialize_determinant(config):
+    trial_det = np.eye(config.num_orbital, config.num_electron)
+    walkers = Walkers(
+        slater_det=np.array(config.num_walkers * [trial_det], dtype=np.complex64),
+        weights=np.ones(config.num_walkers, dtype=np.complex64),
+    )
+    return trial_det, walkers
+
+
 def reshape_H1(config, input_h1):
     """
     Reshape H1 (H1.npy shape is num_orb, num_orb, num_k
@@ -102,25 +135,20 @@ def reshape_H1(config, input_h1):
     return output_h1
 
 
-def measure_E_gs_single(config, trial, weights, walkers, hamiltonian):
-    theta = biorthogonalize(trial, walkers)
-    e1 = hamiltonian.compute_one_body(theta)
-    har_list = hamiltonian.compute_hartree(theta)
-    exch_list = hamiltonian.compute_exchange(theta)
-    print(
-        e1[0] / config.num_kpoint,
-        har_list[0] / config.num_kpoint,
-        exch_list[0] / config.num_kpoint,
-    )
-    e_locs = (e1 + har_list + exch_list) / config.num_kpoint
-    weights = weights.astype(np.complex64)
-    val = 0
-    for e_loc, weight in zip(e_locs, weights):
-        val += e_loc * weight
-    val_glb = config.comm.allreduce(val) / config.comm.Get_size()
-    sum_w = np.sum(weights)
-    sum_glb = config.comm.allreduce(sum_w) / config.comm.Get_size()
-    return val_glb / sum_glb
+def measure_energy(config, trial, walkers, hamiltonian):
+    # compute energies locally
+    theta = biorthogonalize(trial, walkers.slater_det)
+    energy_one_body = hamiltonian.compute_one_body(theta)
+    energy_hartree = hamiltonian.compute_hartree(theta)
+    energy_exchange = hamiltonian.compute_exchange(theta)
+    energy = (energy_one_body + energy_hartree + energy_exchange) / config.num_kpoint
+    weighted_energy = energy @ walkers.weights
+
+    # average over all ranks
+    sum_weights = np.sum(walkers.weights)
+    weighted_energy_global = config.comm.allreduce(weighted_energy)
+    sum_weights_global = config.comm.allreduce(sum_weights)
+    return weighted_energy_global / sum_weights_global
 
 
 def biorthogonalize(trial, walkers):
