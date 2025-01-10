@@ -5,7 +5,7 @@ from mpi4py import MPI
 from opt_einsum import contract_expression
 
 
-def main():
+def main(precision):
     config = Configuration(
         num_walkers=10,
         num_kpoint=1,
@@ -13,11 +13,11 @@ def main():
         num_electron=4,
         singularity=0,
         comm=MPI.COMM_WORLD,
-        precision="foo",
+        precision=precision,
     )
     hamiltonian = Hamiltonian(
-        one_body=reshape_H1(config, np.load("H1.npy")),
-        two_body=np.moveaxis(np.load("H2.npy"), 0, -1),
+        one_body=obtain_H1(config),
+        two_body=obtain_H2(config),
     )
     trial_det, walkers = initialize_determinant(config)
     hamiltonian.setup_energy_expressions(config, trial_det)
@@ -30,6 +30,7 @@ def main():
     E = measure_energy(config, trial_det, walkers, hamiltonian)
     expected = 631.8965 - 0.009482565j
     print(E, np.isclose(E, expected))
+    print()
 
 
 @dataclass
@@ -49,7 +50,7 @@ class Configuration:
         elif self.precision == "double":
             return np.double
         else:
-            raise NotImplementedError(f"Specified precision {self.precision} not implemented.")
+            raise NotImplementedError(self._precision_error_message())
 
     @property
     def complex_type(self):
@@ -58,7 +59,10 @@ class Configuration:
         elif self.precision == "double":
             return np.cdouble
         else:
-            raise NotImplementedError(f"Specified precision {self.precision} not implemented.")
+            raise NotImplementedError(self._precision_error_message())
+
+    def _precision_error_message(self):
+        return f"Specified precision '{self.precision}' not implemented."
 
 
 @dataclass
@@ -81,15 +85,13 @@ class Hamiltonian:
             config.num_orbital * config.num_kpoint,
             config.num_electron * config.num_kpoint,
         )
-        b = np.dot(trial_det.T, self.one_body).astype(np.complex64)
-        alp = np.einsum("pi, prg -> irg", trial_det, self.two_body)
-        alp_t = np.einsum("pi, rpg -> irg", trial_det, self.two_body.conj())
-        alp_s = alp.astype(np.complex64)
-        alp_s_t = alp_t.astype(np.complex64)
+        h1_trial = trial_det.T @ self.one_body
+        alpha = np.einsum("pi, prg -> irg", trial_det, self.two_body)
+        alpha_T = np.einsum("pi, rpg -> irg", trial_det, self.two_body.conj())
         self._one_body_expression = contract_expression(
-            "ip, wpi -> w", b, shape_theta, constants=[0], optimize="greedy"
+            "ip, wpi -> w", h1_trial, shape_theta, constants=[0], optimize="greedy"
         )
-        args = (shape_theta, alp_s, shape_theta, alp_s_t)
+        args = (shape_theta, alpha, shape_theta, alpha_T)
         kwargs = {"constants": [1, 3], "optimize": "greedy"}
         self._hartree_expression = contract_expression(
             "wri, irg, wpj, jpg -> w", *args, **kwargs
@@ -111,28 +113,34 @@ class Hamiltonian:
         return -self._exchange_expression(theta, theta) - self._singularity_correction
 
 
-def initialize_determinant(config):
-    trial_det = np.eye(config.num_orbital, config.num_electron)
-    walkers = Walkers(
-        slater_det=np.array(config.num_walkers * [trial_det], dtype=np.complex64),
-        weights=np.ones(config.num_walkers, dtype=np.complex64),
-    )
-    return trial_det, walkers
-
-
-def reshape_H1(config, input_h1):
+def obtain_H1(config):
     """
     Reshape H1 (H1.npy shape is num_orb, num_orb, num_k
     we implement the k_points to the H1)
     """
+    input_h1 = np.load("H1.npy")
     n = config.num_orbital * config.num_kpoint
-    output_h1 = np.zeros((n, n), dtype=np.complex128)
+    output_h1 = np.zeros((n, n), dtype=config.complex_type)
     for i in range(config.num_kpoint):
         output_h1[
             i * config.num_orbital : (i + 1) * config.num_orbital,
             i * config.num_orbital : (i + 1) * config.num_orbital,
         ] = input_h1[:, :, i]
     return output_h1
+
+
+def obtain_H2(config):
+    return np.moveaxis(np.load("H2.npy"), 0, -1).astype(config.complex_type)
+
+
+def initialize_determinant(config):
+    trial_det = np.eye(config.num_orbital, config.num_electron, dtype=config.float_type)
+    slater_det = np.array(config.num_walkers * [trial_det], dtype=config.complex_type)
+    walkers = Walkers(
+        slater_det=slater_det,
+        weights=np.ones(config.num_walkers, dtype=config.complex_type),
+    )
+    return trial_det, walkers
 
 
 def measure_energy(config, trial, walkers, hamiltonian):
@@ -157,4 +165,5 @@ def biorthogonalize(trial, walkers):
 
 
 if __name__ == "__main__":
-    main()
+    main("single")
+    main("double")
