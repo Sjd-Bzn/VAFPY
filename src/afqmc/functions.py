@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from mpi4py import MPI
-from opt_einsum import contract_expression, contract
+from opt_einsum import contract_expression
 
 
 def main():
@@ -103,13 +103,10 @@ def reshape_H1(config, input_h1):
 
 
 def measure_E_gs_single(config, trial, weights, walkers, hamiltonian):
-    thetas = []
-    for i in range(config.num_walkers):
-        thetas.append(theta(trial, walkers[i]))
-    thetas = np.array(thetas).astype(np.complex64)
-    e1 = hamiltonian.compute_one_body(thetas)
-    har_list = hamiltonian.compute_hartree(thetas)
-    exch_list = hamiltonian.compute_exchange(thetas)
+    theta = biorthogonalize(trial, walkers)
+    e1 = hamiltonian.compute_one_body(theta)
+    har_list = hamiltonian.compute_hartree(theta)
+    exch_list = hamiltonian.compute_exchange(theta)
     print(
         e1[0] / config.num_kpoint,
         har_list[0] / config.num_kpoint,
@@ -126,16 +123,9 @@ def measure_E_gs_single(config, trial, weights, walkers, hamiltonian):
     return val_glb / sum_glb
 
 
-def theta(trial, walker):
-    return np.dot(walker, np.linalg.inv(overlap(trial, walker)))
-
-
-def overlap(left_slater_det, right_slater_det):
-    """
-    It computes the overlap between two Slater determinants.
-    """
-    overlap_mat = np.dot(left_slater_det.transpose(), right_slater_det)
-    return overlap_mat
+def biorthogonalize(trial, walkers):
+    inverse_overlap = np.linalg.inv(trial.T @ walkers)
+    return np.einsum("wpi, wij -> wpj", walkers, inverse_overlap)
 
 
 if __name__ == "__main__":
