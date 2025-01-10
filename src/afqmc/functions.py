@@ -14,6 +14,16 @@ class Configuration:
     singularity: float  # singularity used for the G=0 component (fsg)
     comm: MPI.Comm  # communicator over which the walkers are distributed
 
+
+@dataclass
+class Hamiltonian:
+    one_body: np.typing.ArrayLike
+    # one-body part of Hamiltonian, expected shape (num_orbital, num_orbital, num_kpoint)
+    two_body: np.typing.ArrayLike
+    # two-body part of Hamiltonian after factorization,
+    # expected shape (num_orbital, num_orbital * num_kpoint, num_g * num_kpoint)
+
+
 def main():
     config = Configuration(
         num_walkers= 10,
@@ -23,24 +33,26 @@ def main():
         singularity=0,
         comm=MPI.COMM_WORLD,
     )
+    hamiltonian = Hamiltonian(
+        one_body = np.load("H1.npy"),
+        two_body = np.moveaxis(np.load("H2.npy"), 0, -1),
+    )
     PSI_T_up = np.eye(config.num_orbital,config.num_electron)
-    hamil_one_body = np.load("H1.npy")
-    hamil_two_body = np.moveaxis(np.load("H2.npy"), 0, -1)
     mats_up = np.array(config.num_walkers * [PSI_T_up], dtype=np.complex64)
     weights = np.ones(config.num_walkers, dtype=np.complex64)
 
-    alp = np.einsum('pi, prg -> irg',PSI_T_up , hamil_two_body)
-    alp_t = np.einsum('pi, rpg -> irg', PSI_T_up, hamil_two_body.conj())
+    alp = np.einsum('pi, prg -> irg',PSI_T_up , hamiltonian.two_body)
+    alp_t = np.einsum('pi, rpg -> irg', PSI_T_up, hamiltonian.two_body.conj())
     alp_s = alp.astype(np.complex64)
     alp_s_t = alp_t.astype(np.complex64)
     expr_exch_single = contract_expression('Nri,jrG,Npj,ipG->N',(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),alp_s,(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),alp_s_t,constants=[1,3],optimize='greedy')
     expr_hart_single = contract_expression('Nri,irG,Npj,jpG->N',(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),alp_s,(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),alp_s_t,constants=[1,3],optimize='greedy')
-    E = measure_E_gs_single(config,PSI_T_up,weights,mats_up,hamil_one_body,expr_exch_single, expr_hart_single)
+    E = measure_E_gs_single(config,PSI_T_up,weights,mats_up,hamiltonian.one_body,expr_exch_single, expr_hart_single)
     expected = 631.88947-2.8974954e-09j
     print(E, np.isclose(E, expected))
     np.random.seed(1887431)
     change = 0.05 * np.random.rand(*mats_up.shape)
-    E = measure_E_gs_single(config,PSI_T_up,weights,mats_up + change,hamil_one_body,expr_exch_single, expr_hart_single)
+    E = measure_E_gs_single(config,PSI_T_up,weights,mats_up + change,hamiltonian.one_body,expr_exch_single, expr_hart_single)
     expected = 631.8965-0.009482565j
     print(E, np.isclose(E, expected))
 
