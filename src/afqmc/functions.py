@@ -9,7 +9,6 @@ from mpi4py import MPI
 from opt_einsum import contract, contract_expression
 
 from scipy.linalg import expm
-from cmath import phase
 
 @dataclass
 class HAMILTONIAN:
@@ -138,57 +137,6 @@ def gen_A_o_full(h2):
     return a_o
 
 
-def propagate_walkers(config, trial,walkers,h_0,h_1,h1_exp_half, x_Q,expr_fb,expr_h2):
-    new_walkers = Walkers(np.zeros_like(walkers.slater_det), np.zeros_like(walkers.weights))
-    theta = biorthogonalize(config.backend, trial, walkers.slater_det)
-
-    sqrt_tau = np.sqrt(config.timestep)
-    fb_Q = -2j*sqrt_tau*expr_fb(theta)
-
-    ####Boundary condition for rare events  based on: https://doi.org/10.1103/PhysRevB.80.214116
-
-    fb_Q[abs(fb_Q)>1] = 1.0
-
-    propagate_h0 = np.exp(-config.timestep * h_0)
-    h_2 = sqrt_tau * 1j * expr_h2(x_Q - fb_Q.T)
-    print('h_2 type', h_2.dtype)
-    for i in range(config.num_walkers):
-########       Different propagators Taylor, S1, and S2
-
-        if config.propagator == 'Taylor':
-            h = h_1 + h_2 [:,:,i]
-            new_walkers.slater_det[i] = propagate_h0 * apply_taylor(config, h, walkers.slater_det[i])
-
-        elif config.propagator == 'S1':
-            full_step_with_h2 = apply_taylor(config, h_2[:,:,i], walkers.slater_det[i])
-            full_step_with_h1 = expm(-config.timestep * h_1) * full_step_with_h2
-            new_walkers.slater_det[i] = propagate_h0 * full_step_with_h1
-
-        elif config.propagator == 'S2':
-            half_step_with_h1 = h1_exp_half @ walkers.slater_det[i]
-            full_step_with_h2 = apply_taylor(config, h_2[:,:,i], half_step_with_h1)
-            new_walkers.slater_det[i] = propagate_h0 * h1_exp_half @ full_step_with_h2
-
-        else:
-            raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
-
-        new_overlap = project_trial(config.backend, trial, new_walkers.slater_det[i])
-        old_overlap = project_trial(config.backend, trial, walkers.slater_det[i])
-        overlap_ratio = new_overlap / old_overlap
-        alpha = phase(overlap_ratio)
-
-####new_weight
-        new_walkers.weights[i] = abs(overlap_ratio*(np.exp( np.dot(x_Q[:,i],fb_Q[i])-np.dot(fb_Q[i],fb_Q[i]/2))))* max(0,np.cos(alpha))*walkers.weights[i]
-    return new_walkers
-
-
-def apply_taylor(config, matrix, slater_det):
-    result = slater_det.copy()
-    addend = slater_det
-    for i in range(config.order_propagation):
-        addend = matrix @ addend / (i + 1)
-        result += addend
-    return result
 
 
 def main(precision, backend):
@@ -408,6 +356,56 @@ def measure_energy(config, trial, walkers, hamiltonian):
     sum_weights_global = config.comm.allreduce(sum_weights)
     return weighted_energy_global / sum_weights_global
 
+
+def propagate_walkers(config, trial,walkers,h_0,h_1,h1_exp_half, x_Q,expr_fb,expr_h2):
+    new_walkers = Walkers(np.zeros_like(walkers.slater_det), np.zeros_like(walkers.weights))
+    theta = biorthogonalize(config.backend, trial, walkers.slater_det)
+    sqrt_tau = np.sqrt(config.timestep)
+    fb_Q = -2j*sqrt_tau*expr_fb(theta)
+    ####Boundary condition for rare events  based on: https://doi.org/10.1103/PhysRevB.80.214116
+    fb_Q[abs(fb_Q)>1] = 1.0
+
+    propagate_h0 = np.exp(-config.timestep * h_0)
+    h_2 = sqrt_tau * 1j * expr_h2(x_Q - fb_Q.T)
+    print('h_2 type', h_2.dtype)
+
+    if config.propagator == "Taylor":
+        h = h_1 + h_2
+        full_step_with_h1_and_h2 = apply_taylor(config, h, walkers.slater_det)
+        new_walkers.slater_det = propagate_h0 * full_step_with_h1_and_h2
+
+    elif config.propagator == "S1":
+        full_step_with_h2 = apply_taylor(config, h_2, half_step_with_h1)
+        full_step_with_h1 = expm(-config.timestep * h_1) @ full_step_with_h2
+        new_walkers.slater_det = propagate_h0 * full_step_with_h1
+
+    elif config.propagator == "S2":
+        half_step_with_h1 = h1_exp_half @ walkers.slater_det
+        full_step_with_h2 = apply_taylor(config, h_2, half_step_with_h1)
+        new_walkers.slater_det = propagate_h0 * h1_exp_half @ full_step_with_h2
+
+    else:
+        raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
+
+    new_overlap = project_trial(config.backend, trial, new_walkers.slater_det)
+    old_overlap = project_trial(config.backend, trial, walkers.slater_det)
+    overlap_ratio = new_overlap / old_overlap
+    cos_alpha = np.cos(config.backend.angle(overlap_ratio))
+    arg = contract("gw, wg -> w", x_Q - 0.5 * fb_Q.T, fb_Q)
+    importance = np.abs(overlap_ratio * np.exp(arg)) * np.maximum(0, cos_alpha)
+    new_walkers.weights = importance * walkers.weights
+
+    return new_walkers
+
+
+def apply_taylor(config, matrix, slater_det):
+    result = slater_det.copy()
+    addend = slater_det
+    for i in range(config.order_propagation):
+        # addend = contract("pq, qi -> pi", matrix , addend) / (i + 1)
+        addend = contract("pqw, wqi -> wpi", matrix , addend) / (i + 1)
+        result += addend
+    return result
 
 def biorthogonalize(backend, trial, slater_det):
     inverse_overlap = backend.linalg.inv(trial.T @ slater_det)
