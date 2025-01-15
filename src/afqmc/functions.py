@@ -325,7 +325,7 @@ def overlap(left_slater_det, right_slater_det):
     #overlap_mat = np.array([right_slater_det[num_orb*k:num_orb*k+num_electrons_up] for k in range(num_k)]).reshape(num_k*num_electrons_up,num_k*num_electrons_up)
     return overlap_mat
 
-def main():
+def main(precision, backend):
     D_TAU = 0.00075
     SQRT_DTAU = np.sqrt(D_TAU)
     NUM_WALKERS = 10
@@ -399,11 +399,6 @@ def main():
     walkers.mats_up_double,walkers.weights_double = update_hyb_double(PSI_T_up_0, PSI_T_up,walkers.mats_up_double,walkers.weights_double,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Q,x_o_Q,num_k,num_orb,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,NUM_WALKERS,order_trunc,expr_h2_e,expr_h2_o)
     print("double", np.allclose(walkers.mats_up_double, expected_slater_det), np.allclose(walkers.weights_double, expected_weights))
 
-if __name__ == "__main__":
-    main()
-    exit()
-
-def main(precision, backend):
     if backend == "numpy":
         backend = np
         backend.block_diag = scipy.linalg.block_diag
@@ -573,7 +568,7 @@ def biorthogonalize(backend, trial, walkers):
 
 
 if __name__ == "__main__":
-    main("single", "numpy")
+    # main("single", "numpy")
     main("double", "numpy")
-    main("single", "jax")
-    main("double", "jax")
+    # main("single", "jax")
+    # main("double", "jax")
