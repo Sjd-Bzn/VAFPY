@@ -140,6 +140,7 @@ def gen_A_o_full(h2):
 
 
 def main(precision, backend):
+    print()
     if backend == "numpy":
         backend = np
         backend.block_diag = scipy.linalg.block_diag
@@ -207,16 +208,13 @@ def main(precision, backend):
     H_1_self = -config.timestep * (hamil_MF.one_body+h_self)
     H1_self_half_exp = expm(H_1_self/2).astype(np.complex64)
 
-    walkers_single = Walkers(walkers.slater_det.astype(np.csingle), walkers.weights.astype(np.csingle))
-    walkers_double = Walkers(walkers.slater_det.astype(np.cdouble), walkers.weights.astype(np.cdouble))
-
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
-    walkers_single = propagate_walkers(config, trial_det, walkers_single,0,hamiltonian.one_body,H1_self_half_exp,x_Q,expr_fb,expr_h2)
-    print("single", np.allclose(walkers_single.slater_det, expected_slater_det), np.allclose(walkers_single.weights, expected_weights))
+    new_walkers = propagate_walkers(config, trial_det, walkers, 0, hamiltonian.one_body,H1_self_half_exp, x_Q, expr_fb, expr_h2)
+    print("propagation", np.allclose(new_walkers.slater_det, expected_slater_det), np.allclose(new_walkers.weights, expected_weights))
 
-    walkers_double = propagate_walkers(config, trial_det,walkers_double,0,hamiltonian.one_body,H1_self_half_exp,x_Q,expr_fb,expr_h2)
-    print("double", np.allclose(walkers_double.slater_det, expected_slater_det), np.allclose(walkers_double.weights, expected_weights))
+    # walkers_double = propagate_walkers(config, trial_det,walkers_double,0,hamiltonian.one_body,H1_self_half_exp,x_Q,expr_fb,expr_h2)
+    # print("double", np.allclose(walkers_double.slater_det, expected_slater_det), np.allclose(walkers_double.weights, expected_weights))
 
     E = measure_energy(config, trial_det, walkers, hamiltonian)
     print(E.dtype, E.__class__)
@@ -227,7 +225,6 @@ def main(precision, backend):
     E = measure_energy(config, trial_det, walkers, hamiltonian)
     expected = 631.8965 - 0.009482565j
     print(E, np.isclose(E, expected))
-    print()
 
 
 @dataclass
@@ -416,7 +413,7 @@ def project_trial(backend, trial, slater_det):
     return backend.linalg.det(overlap)**2
 
 if __name__ == "__main__":
-    # main("single", "numpy")
+    main("single", "numpy")
     main("double", "numpy")
     # main("single", "jax")
     # main("double", "jax")
