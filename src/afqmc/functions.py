@@ -326,9 +326,34 @@ def overlap(left_slater_det, right_slater_det):
     return overlap_mat
 
 def main(precision, backend):
+    if backend == "numpy":
+        backend = np
+        backend.block_diag = scipy.linalg.block_diag
+    elif backend == "jax":
+        backend = jnp
+        backend.block_diag = jax.scipy.linalg.block_diag
+    else:
+        raise NotImplementedError(f"Selected {backend=} not implemented!")
+    config = Configuration(
+        num_walkers=10,
+        num_kpoint=1,
+        num_orbital=8,
+        num_electron=4,
+        singularity=0,
+        comm=MPI.COMM_WORLD,
+        precision=precision,
+        backend=backend,
+    )
+    hamiltonian = Hamiltonian(
+        one_body=obtain_H1(config),
+        two_body=obtain_H2(config),
+    )
+    trial_det, walkers = initialize_determinant(config)
+    hamiltonian.setup_energy_expressions(config, trial_det)
+
     D_TAU = 0.00075
     SQRT_DTAU = np.sqrt(D_TAU)
-    NUM_WALKERS = 10
+    # NUM_WALKERS = 10
     num_orb = 8
     num_electrons_up = 4
     num_g = 12039
@@ -354,8 +379,8 @@ def main(precision, backend):
     ql = np.array(ql)
 
     np.random.seed(34841311)
-    x_e_Q = np.random.randn(num_g*NUM_WALKERS).reshape(num_g,NUM_WALKERS)
-    x_o_Q = np.random.randn(num_g*NUM_WALKERS).reshape(num_g,NUM_WALKERS)
+    x_e_Q = np.random.randn(num_g, config.num_walkers)
+    x_o_Q = np.random.randn(num_g, config.num_walkers)
     x_e_Qs = x_e_Q.astype(np.single)
     x_o_Qs = x_o_Q.astype(np.single)
 
@@ -371,58 +396,32 @@ def main(precision, backend):
     ALPHA_O = contract('ip,prG->irG',PSI_T_up.T,hamil_MF.two_body_o)
     ALPHA_E_s = ALPHA_E.astype(np.complex64)
     ALPHA_O_s = ALPHA_O.astype(np.complex64)
-    expr_fb_e = contract_expression('Nri,irG->NG',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),ALPHA_E_s,constants=[1],optimize='greedy')
-    expr_fb_o = contract_expression('Nri,irG->NG',(NUM_WALKERS,num_orb*num_k,num_electrons_up*num_k),ALPHA_O_s,constants=[1],optimize='greedy')
-    expr_h2_e = contract_expression('ijG,GN->ijN',hamil_MF.two_body_e.astype(np.complex64),(num_g,NUM_WALKERS),constants=[0],optimize='greedy')
-    expr_h2_o = contract_expression('ijG,GN->ijN',hamil_MF.two_body_o.astype(np.complex64),(num_g,NUM_WALKERS),constants=[0],optimize='greedy')
+    expr_fb_e = contract_expression('Nri,irG->NG',(config.num_walkers,num_orb*num_k,num_electrons_up*num_k),ALPHA_E_s,constants=[1],optimize='greedy')
+    expr_fb_o = contract_expression('Nri,irG->NG',(config.num_walkers,num_orb*num_k,num_electrons_up*num_k),ALPHA_O_s,constants=[1],optimize='greedy')
+    expr_h2_e = contract_expression('ijG,GN->ijN',hamil_MF.two_body_e.astype(np.complex64),(num_g,config.num_walkers),constants=[0],optimize='greedy')
+    expr_h2_o = contract_expression('ijG,GN->ijN',hamil_MF.two_body_o.astype(np.complex64),(num_g,config.num_walkers),constants=[0],optimize='greedy')
 
     h_self = -contract('ijG,jkG->ik',hamil.two_body,h2_t)/2#/num_k
     H_1_self = -D_TAU * (hamil_MF.one_body+h_self)
-    H1_self_exp = expm(H_1_self)
     H1_self_half_exp = expm(H_1_self/2).astype(np.complex64)
 
     @dataclass
     class WALKERS:
-        mats_up_single = np.array(NUM_WALKERS * [PSI_T_up], dtype=np.complex64)   ### spinn up and down
-        weights_single = np.ones(NUM_WALKERS, dtype=np.complex64)   ## initiate by PSI_I from DFT calculation which at first has weight = 1 and phase = 0
-        mats_up_double = np.array(NUM_WALKERS * [PSI_T_up], dtype=np.complex128)   ### spinn up and down
-        weights_double = np.ones(NUM_WALKERS, dtype=np.complex128)   ## initiate by PSI_I from DFT calculation which at first has weight = 1 and phase = 0
+        mats_up_single = np.array(config.num_walkers * [PSI_T_up], dtype=np.complex64)   ### spinn up and down
+        weights_single = np.ones(config.num_walkers, dtype=np.complex64)   ## initiate by PSI_I from DFT calculation which at first has weight = 1 and phase = 0
+        mats_up_double = np.array(config.num_walkers * [PSI_T_up], dtype=np.complex128)   ### spinn up and down
+        weights_double = np.ones(config.num_walkers, dtype=np.complex128)   ## initiate by PSI_I from DFT calculation which at first has weight = 1 and phase = 0
 
-    walkers = WALKERS
+    walkers_old = WALKERS
     propagator = "S2"
 
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
-    walkers.mats_up_single,walkers.weights_single = update_hyb_single(PSI_T_up_0, PSI_T_up,walkers.mats_up_single,walkers.weights_single,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Qs,x_o_Qs,num_k,num_orb,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,NUM_WALKERS,order_trunc,expr_h2_e,expr_h2_o)
-    print("single", np.allclose(walkers.mats_up_single, expected_slater_det), np.allclose(walkers.weights_single, expected_weights))
+    walkers_old.mats_up_single,walkers_old.weights_single = update_hyb_single(PSI_T_up_0, PSI_T_up,walkers_old.mats_up_single,walkers_old.weights_single,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Qs,x_o_Qs,num_k,num_orb,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,order_trunc,expr_h2_e,expr_h2_o)
+    print("single", np.allclose(walkers_old.mats_up_single, expected_slater_det), np.allclose(walkers_old.weights_single, expected_weights))
 
-    walkers.mats_up_double,walkers.weights_double = update_hyb_double(PSI_T_up_0, PSI_T_up,walkers.mats_up_double,walkers.weights_double,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Q,x_o_Q,num_k,num_orb,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,NUM_WALKERS,order_trunc,expr_h2_e,expr_h2_o)
-    print("double", np.allclose(walkers.mats_up_double, expected_slater_det), np.allclose(walkers.weights_double, expected_weights))
-
-    if backend == "numpy":
-        backend = np
-        backend.block_diag = scipy.linalg.block_diag
-    elif backend == "jax":
-        backend = jnp
-        backend.block_diag = jax.scipy.linalg.block_diag
-    else:
-        raise NotImplementedError(f"Selected {backend=} not implemented!")
-    config = Configuration(
-        num_walkers=10,
-        num_kpoint=1,
-        num_orbital=8,
-        num_electron=4,
-        singularity=0,
-        comm=MPI.COMM_WORLD,
-        precision=precision,
-        backend=backend,
-    )
-    hamiltonian = Hamiltonian(
-        one_body=obtain_H1(config),
-        two_body=obtain_H2(config),
-    )
-    trial_det, walkers = initialize_determinant(config)
-    hamiltonian.setup_energy_expressions(config, trial_det)
+    walkers_old.mats_up_double,walkers_old.weights_double = update_hyb_double(PSI_T_up_0, PSI_T_up,walkers_old.mats_up_double,walkers_old.weights_double,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Q,x_o_Q,num_k,num_orb,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,order_trunc,expr_h2_e,expr_h2_o)
+    print("double", np.allclose(walkers_old.mats_up_double, expected_slater_det), np.allclose(walkers_old.weights_double, expected_weights))
 
     E = measure_energy(config, trial_det, walkers, hamiltonian)
     print(E.dtype, E.__class__)
