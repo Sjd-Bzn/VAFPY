@@ -339,7 +339,11 @@ def main(precision, backend):
         num_kpoint=1,
         num_orbital=8,
         num_electron=4,
+        num_g = 12039,
         singularity=0,
+        propagator="S2",
+        order_propagation=6,
+        timestep=0.00075,
         comm=MPI.COMM_WORLD,
         precision=precision,
         backend=backend,
@@ -351,11 +355,7 @@ def main(precision, backend):
     trial_det, walkers = initialize_determinant(config)
     hamiltonian.setup_energy_expressions(config, trial_det)
 
-    D_TAU = 0.00075
-    SQRT_DTAU = np.sqrt(D_TAU)
-    num_g = 12039
-    order_trunc = 6
-    propagator = "S2"
+    SQRT_DTAU = np.sqrt(config.timestep)
 
     h2_t = np.einsum('prG->rpG', hamiltonian.two_body.conj())
 
@@ -368,8 +368,8 @@ def main(precision, backend):
     ql = np.array(ql)
 
     np.random.seed(34841311)
-    x_e_Q = np.random.randn(num_g, config.num_walkers)
-    x_o_Q = np.random.randn(num_g, config.num_walkers)
+    x_e_Q = np.random.randn(config.num_g, config.num_walkers)
+    x_o_Q = np.random.randn(config.num_g, config.num_walkers)
     x_e_Qs = x_e_Q.astype(np.single)
     x_o_Qs = x_o_Q.astype(np.single)
 
@@ -387,11 +387,11 @@ def main(precision, backend):
     ALPHA_O_s = ALPHA_O.astype(np.complex64)
     expr_fb_e = contract_expression('Nri,irG->NG',(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),ALPHA_E_s,constants=[1],optimize='greedy')
     expr_fb_o = contract_expression('Nri,irG->NG',(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),ALPHA_O_s,constants=[1],optimize='greedy')
-    expr_h2_e = contract_expression('ijG,GN->ijN',hamil_MF.two_body_e.astype(np.complex64),(num_g,config.num_walkers),constants=[0],optimize='greedy')
-    expr_h2_o = contract_expression('ijG,GN->ijN',hamil_MF.two_body_o.astype(np.complex64),(num_g,config.num_walkers),constants=[0],optimize='greedy')
+    expr_h2_e = contract_expression('ijG,GN->ijN',hamil_MF.two_body_e.astype(np.complex64),(config.num_g,config.num_walkers),constants=[0],optimize='greedy')
+    expr_h2_o = contract_expression('ijG,GN->ijN',hamil_MF.two_body_o.astype(np.complex64),(config.num_g,config.num_walkers),constants=[0],optimize='greedy')
 
     h_self = -contract('ijG,jkG->ik',hamiltonian.two_body,h2_t)/2#/num_k
-    H_1_self = -D_TAU * (hamil_MF.one_body+h_self)
+    H_1_self = -config.timestep * (hamil_MF.one_body+h_self)
     H1_self_half_exp = expm(H_1_self/2).astype(np.complex64)
 
     walkers_single = Walkers(walkers.slater_det.astype(np.csingle), walkers.weights.astype(np.csingle))
@@ -399,10 +399,10 @@ def main(precision, backend):
 
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
-    walkers_single.slater_det,walkers_single.weights = update_hyb_single(trial_det, trial_det,walkers_single.slater_det,walkers_single.weights,ql,0,hamiltonian.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Qs,x_o_Qs,config.num_kpoint,config.num_orbital,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,order_trunc,expr_h2_e,expr_h2_o)
+    walkers_single.slater_det,walkers_single.weights = update_hyb_single(trial_det, trial_det,walkers_single.slater_det,walkers_single.weights,ql,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Qs,x_o_Qs,config.num_kpoint,config.num_orbital,config.num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
     print("single", np.allclose(walkers_single.slater_det, expected_slater_det), np.allclose(walkers_single.weights, expected_weights))
 
-    walkers_double.slater_det,walkers_double.weights = update_hyb_double(trial_det, trial_det,walkers_double.slater_det,walkers_double.weights,ql,0,hamiltonian.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Q,x_o_Q,config.num_kpoint,config.num_orbital,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,order_trunc,expr_h2_e,expr_h2_o)
+    walkers_double.slater_det,walkers_double.weights = update_hyb_double(trial_det, trial_det,walkers_double.slater_det,walkers_double.weights,ql,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Q,x_o_Q,config.num_kpoint,config.num_orbital,config.num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
     print("double", np.allclose(walkers_double.slater_det, expected_slater_det), np.allclose(walkers_double.weights, expected_weights))
 
     E = measure_energy(config, trial_det, walkers, hamiltonian)
@@ -423,7 +423,11 @@ class Configuration:
     num_kpoint: int  # number of k-points to sample the Brillouin zone
     num_orbital: int  # size of the basis
     num_electron: int  # number of occupied states
+    num_g: int  # number of points in the factorization
     singularity: float  # singularity used for the G=0 component (fsg)
+    propagator: str  # select which method to use to propagate in time
+    order_propagation: int  # number of times the Hamiltonian is applied in propagator
+    timestep: float  # imaginary time passing between two steps
     comm: MPI.Comm  # communicator over which the walkers are distributed
     precision: str  # must be either single or double
     backend: types.ModuleType  # module used to execute numpy-like operations
