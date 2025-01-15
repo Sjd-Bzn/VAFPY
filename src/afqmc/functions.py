@@ -355,6 +355,7 @@ def main(precision, backend):
     SQRT_DTAU = np.sqrt(D_TAU)
     num_g = 12039
     order_trunc = 6
+    propagator = "S2"
 
     h2_t = np.einsum('prG->rpG', hamiltonian.two_body.conj())
 
@@ -393,23 +394,16 @@ def main(precision, backend):
     H_1_self = -D_TAU * (hamil_MF.one_body+h_self)
     H1_self_half_exp = expm(H_1_self/2).astype(np.complex64)
 
-    @dataclass
-    class WALKERS:
-        mats_up_single = np.array(config.num_walkers * [trial_det], dtype=np.complex64)   ### spinn up and down
-        weights_single = np.ones(config.num_walkers, dtype=np.complex64)   ## initiate by PSI_I from DFT calculation which at first has weight = 1 and phase = 0
-        mats_up_double = np.array(config.num_walkers * [trial_det], dtype=np.complex128)   ### spinn up and down
-        weights_double = np.ones(config.num_walkers, dtype=np.complex128)   ## initiate by PSI_I from DFT calculation which at first has weight = 1 and phase = 0
-
-    walkers_old = WALKERS
-    propagator = "S2"
+    walkers_single = Walkers(walkers.slater_det.astype(np.csingle), walkers.weights.astype(np.csingle))
+    walkers_double = Walkers(walkers.slater_det.astype(np.cdouble), walkers.weights.astype(np.cdouble))
 
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
-    walkers_old.mats_up_single,walkers_old.weights_single = update_hyb_single(trial_det, trial_det,walkers_old.mats_up_single,walkers_old.weights_single,ql,0,hamiltonian.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Qs,x_o_Qs,config.num_kpoint,config.num_orbital,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,order_trunc,expr_h2_e,expr_h2_o)
-    print("single", np.allclose(walkers_old.mats_up_single, expected_slater_det), np.allclose(walkers_old.weights_single, expected_weights))
+    walkers_single.slater_det,walkers_single.weights = update_hyb_single(trial_det, trial_det,walkers_single.slater_det,walkers_single.weights,ql,0,hamiltonian.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Qs,x_o_Qs,config.num_kpoint,config.num_orbital,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,order_trunc,expr_h2_e,expr_h2_o)
+    print("single", np.allclose(walkers_single.slater_det, expected_slater_det), np.allclose(walkers_single.weights, expected_weights))
 
-    walkers_old.mats_up_double,walkers_old.weights_double = update_hyb_double(trial_det, trial_det,walkers_old.mats_up_double,walkers_old.weights_double,ql,0,hamiltonian.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Q,x_o_Q,config.num_kpoint,config.num_orbital,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,order_trunc,expr_h2_e,expr_h2_o)
-    print("double", np.allclose(walkers_old.mats_up_double, expected_slater_det), np.allclose(walkers_old.weights_double, expected_weights))
+    walkers_double.slater_det,walkers_double.weights = update_hyb_double(trial_det, trial_det,walkers_double.slater_det,walkers_double.weights,ql,0,hamiltonian.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Q,x_o_Q,config.num_kpoint,config.num_orbital,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,order_trunc,expr_h2_e,expr_h2_o)
+    print("double", np.allclose(walkers_double.slater_det, expected_slater_det), np.allclose(walkers_double.weights, expected_weights))
 
     E = measure_energy(config, trial_det, walkers, hamiltonian)
     print(E.dtype, E.__class__)
@@ -420,9 +414,6 @@ def main(precision, backend):
     E = measure_energy(config, trial_det, walkers, hamiltonian)
     expected = 631.8965 - 0.009482565j
     print(E, np.isclose(E, expected))
-
-
-
     print()
 
 
