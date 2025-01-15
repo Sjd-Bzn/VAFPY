@@ -127,20 +127,18 @@ def gen_A_o_full(h2):
     return a_o
 
 
-def propagate_walkers(config, trial,walkers,h_0,h_1,h1_exp_half, x_e_Q, x_o_Q,expr_fb_e,expr_fb_o,expr_h2_e,expr_h2_o):
+def propagate_walkers(config, trial,walkers,h_0,h_1,h1_exp_half, x_Q,expr_fb,expr_h2):
     new_walkers = Walkers(np.zeros_like(walkers.slater_det), np.zeros_like(walkers.weights))
     theta = biorthogonalize(config.backend, trial, walkers.slater_det)
 
     sqrt_tau = np.sqrt(config.timestep)
-    fb_e_Q = -2j*sqrt_tau*expr_fb_e(theta)
-    fb_o_Q = -2j*sqrt_tau*expr_fb_o(theta)
+    fb_Q = -2j*sqrt_tau*expr_fb(theta)
 
     ####Boundary condition for rare events  based on: https://doi.org/10.1103/PhysRevB.80.214116
 
-    fb_e_Q[abs(fb_e_Q)>1] = 1.0
-    fb_o_Q[abs(fb_o_Q)>1] = 1.0
+    fb_Q[abs(fb_Q)>1] = 1.0
 
-    h_2 = expr_h2_e(x_e_Q-fb_e_Q.T)+expr_h2_o(x_o_Q-fb_o_Q.T)
+    h_2 = expr_h2(x_Q-fb_Q.T)
     print('h_2 type', h_2.dtype)
     for i in range(config.num_walkers):
         if config.propagator == 'Old':
@@ -172,7 +170,7 @@ def propagate_walkers(config, trial,walkers,h_0,h_1,h1_exp_half, x_e_Q, x_o_Q,ex
 
 ####new_weight
 
-        new_walkers.weights[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_e_Q[:,i],fb_e_Q[i])-np.dot(fb_e_Q[i],fb_e_Q[i]/2))*np.exp(np.dot(x_o_Q[:,i], fb_o_Q[i])-np.dot(fb_o_Q[i],fb_o_Q[i]/2))))* max(0,np.cos(alpha))*walkers.weights[i]
+        new_walkers.weights[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_Q[:,i],fb_Q[i])-np.dot(fb_Q[i],fb_Q[i]/2))))* max(0,np.cos(alpha))*walkers.weights[i]
     return new_walkers
 
 def theta(trial, walker):
@@ -240,6 +238,7 @@ def main(precision, backend):
     x_o_Q = np.random.randn(config.num_g, config.num_walkers)
     x_e_Qs = x_e_Q.astype(np.single)
     x_o_Qs = x_o_Q.astype(np.single)
+    x_Q = np.concatenate((x_e_Qs, x_o_Qs), axis=0)
 
     hamil_MF = HAMILTONIAN_MF
     h2_af_MF_sub = A_af_MF_sub(trial_det,trial_det,hamiltonian.two_body,ql,config.num_kpoint,config.num_orbital,config.num_electron)
@@ -253,10 +252,10 @@ def main(precision, backend):
     ALPHA_O = contract('ip,prG->irG',trial_det.T,hamil_MF.two_body_o)
     ALPHA_E_s = ALPHA_E.astype(np.complex64)
     ALPHA_O_s = ALPHA_O.astype(np.complex64)
-    expr_fb_e = contract_expression('Nri,irG->NG',(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),ALPHA_E_s,constants=[1],optimize='greedy')
-    expr_fb_o = contract_expression('Nri,irG->NG',(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),ALPHA_O_s,constants=[1],optimize='greedy')
-    expr_h2_e = contract_expression('ijG,GN->ijN',hamil_MF.two_body_e.astype(np.complex64),(config.num_g,config.num_walkers),constants=[0],optimize='greedy')
-    expr_h2_o = contract_expression('ijG,GN->ijN',hamil_MF.two_body_o.astype(np.complex64),(config.num_g,config.num_walkers),constants=[0],optimize='greedy')
+    ALPHA = np.concatenate((ALPHA_E_s, ALPHA_O_s), axis=-1)
+    expr_fb = contract_expression('Nri,irG->NG',(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),ALPHA,constants=[1],optimize='greedy')
+    two_body = np.concatenate((hamil_MF.two_body_e,hamil_MF.two_body_o), axis=-1).astype(np.complex64)
+    expr_h2 = contract_expression('ijG,GN->ijN',two_body,(2*config.num_g,config.num_walkers),constants=[0],optimize='greedy')
 
     h_self = -contract('ijG,jkG->ik',hamiltonian.two_body,h2_t)/2#/num_k
     H_1_self = -config.timestep * (hamil_MF.one_body+h_self)
@@ -267,10 +266,10 @@ def main(precision, backend):
 
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
-    walkers_single = propagate_walkers(config, trial_det, walkers_single,0,hamiltonian.one_body,H1_self_half_exp,x_e_Qs,x_o_Qs,expr_fb_e,expr_fb_o,expr_h2_e,expr_h2_o)
+    walkers_single = propagate_walkers(config, trial_det, walkers_single,0,hamiltonian.one_body,H1_self_half_exp,x_Q,expr_fb,expr_h2)
     print("single", np.allclose(walkers_single.slater_det, expected_slater_det), np.allclose(walkers_single.weights, expected_weights))
 
-    walkers_double = propagate_walkers(config, trial_det,walkers_double,0,hamiltonian.one_body,H1_self_half_exp,x_e_Q,x_o_Q,expr_fb_e,expr_fb_o,expr_h2_e,expr_h2_o)
+    walkers_double = propagate_walkers(config, trial_det,walkers_double,0,hamiltonian.one_body,H1_self_half_exp,x_Q,expr_fb,expr_h2)
     print("double", np.allclose(walkers_double.slater_det, expected_slater_det), np.allclose(walkers_double.weights, expected_weights))
 
     E = measure_energy(config, trial_det, walkers, hamiltonian)
