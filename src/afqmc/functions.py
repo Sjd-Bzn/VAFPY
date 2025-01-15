@@ -127,12 +127,12 @@ def gen_A_o_full(h2):
     return a_o
 
 
-def propagate_walkers(trial,walker_mat,walker_weight,h_0,h_1,d_tau,e_0,h1_exp_half,propagator, x_e_Q, x_o_Q,num_k,num_orb,SQRT_DTAU,expr_fb_e,expr_fb_o,NUM_WALKERS,order_trunc,expr_h2_e,expr_h2_o):
-    new_walker_mat = np.zeros_like(walker_mat)
-    new_walker_weight = np.zeros_like(walker_weight)
+def propagate_walkers(trial,walkers,h_0,h_1,d_tau,e_0,h1_exp_half,propagator, x_e_Q, x_o_Q,num_k,num_orb,SQRT_DTAU,expr_fb_e,expr_fb_o,NUM_WALKERS,order_trunc,expr_h2_e,expr_h2_o):
+    new_walker_mat = np.zeros_like(walkers.slater_det)
+    new_walker_weight = np.zeros_like(walkers.weights)
     theta_mat = []
-    for i in range(len(walker_mat)):
-        theta_mat.append(theta(trial, walker_mat[i]))
+    for i in range(len(walkers.slater_det)):
+        theta_mat.append(theta(trial, walkers.slater_det[i]))
     theta_mat=np.array(theta_mat)
     theta_mat = theta_mat.astype(np.complex64)
 
@@ -149,7 +149,7 @@ def propagate_walkers(trial,walker_mat,walker_weight,h_0,h_1,d_tau,e_0,h1_exp_ha
     for i in range(0,NUM_WALKERS):
         if propagator == 'Old':
             h= h_1 + SQRT_DTAU * 1j *h_2 [:,:,i]
-            addend = walker_mat[i]
+            addend = walkers.slater_det[i]
             for j in range(order_trunc+1):
                 new_walker_mat[i] += addend
                 addend = h@addend/(j + 1)
@@ -158,25 +158,25 @@ def propagate_walkers(trial,walker_mat,walker_weight,h_0,h_1,d_tau,e_0,h1_exp_ha
 
         elif propagator == 'Taylor':
             prop_taylor = np.exp(d_tau * (-h_0 + e_0)) * exp_Taylor(h, num_k, num_orb, order_trunc)
-            new_walker_mat[i] = prop_taylor @ walker_mat[i]
+            new_walker_mat[i] = prop_taylor @ walkers.slater_det[i]
 
         elif propagator == 'S1':
 
             prop_S1 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1) * exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i], num_k, num_orb, order_trunc)
-            new_walker_mat[i] = prop_S1 @ walker_mat[i]
+            new_walker_mat[i] = prop_S1 @ walkers.slater_det[i]
 
         elif propagator == 'S2':
             prop_S2 = h1_exp_half@exp_Taylor(SQRT_DTAU*1j*h_2[:, :, i],num_k,num_orb,order_trunc)@h1_exp_half
-            new_walker_mat[i] = prop_S2 @ walker_mat[i]
+            new_walker_mat[i] = prop_S2 @ walkers.slater_det[i]
         else:
             raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
 
-        ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i]))**2 / np.linalg.det(overlap(trial,walker_mat[i]))**2
+        ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i]))**2 / np.linalg.det(overlap(trial,walkers.slater_det[i]))**2
         alpha = phase(ovrlap_ratio)
 
 ####new_weight
 
-        new_walker_weight[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_e_Q[:,i],fb_e_Q[i])-np.dot(fb_e_Q[i],fb_e_Q[i]/2))*np.exp(np.dot(x_o_Q[:,i], fb_o_Q[i])-np.dot(fb_o_Q[i],fb_o_Q[i]/2))))* max(0,np.cos(alpha))*walker_weight[i]
+        new_walker_weight[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_e_Q[:,i],fb_e_Q[i])-np.dot(fb_e_Q[i],fb_e_Q[i]/2))*np.exp(np.dot(x_o_Q[:,i], fb_o_Q[i])-np.dot(fb_o_Q[i],fb_o_Q[i]/2))))* max(0,np.cos(alpha))*walkers.weights[i]
     return new_walker_mat, new_walker_weight
 
 def theta(trial, walker):
@@ -273,10 +273,10 @@ def main(precision, backend):
 
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
-    walkers_single.slater_det,walkers_single.weights = propagate_walkers(trial_det, walkers_single.slater_det,walkers_single.weights,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Qs,x_o_Qs,config.num_kpoint,config.num_orbital,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
+    walkers_single.slater_det,walkers_single.weights = propagate_walkers(trial_det, walkers_single,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Qs,x_o_Qs,config.num_kpoint,config.num_orbital,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
     print("single", np.allclose(walkers_single.slater_det, expected_slater_det), np.allclose(walkers_single.weights, expected_weights))
 
-    walkers_double.slater_det,walkers_double.weights = propagate_walkers(trial_det,walkers_double.slater_det,walkers_double.weights,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Q,x_o_Q,config.num_kpoint,config.num_orbital,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
+    walkers_double.slater_det,walkers_double.weights = propagate_walkers(trial_det,walkers_double,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Q,x_o_Q,config.num_kpoint,config.num_orbital,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
     print("double", np.allclose(walkers_double.slater_det, expected_slater_det), np.allclose(walkers_double.weights, expected_weights))
 
     E = measure_energy(config, trial_det, walkers, hamiltonian)
