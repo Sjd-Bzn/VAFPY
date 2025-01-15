@@ -127,16 +127,12 @@ def gen_A_o_full(h2):
     return a_o
 
 
-def propagate_walkers(trial,walkers,h_0,h_1,d_tau,e_0,h1_exp_half,propagator, x_e_Q, x_o_Q,num_k,num_orb,SQRT_DTAU,expr_fb_e,expr_fb_o,NUM_WALKERS,order_trunc,expr_h2_e,expr_h2_o):
+def propagate_walkers(config, trial,walkers,h_0,h_1,d_tau,e_0,h1_exp_half,propagator, x_e_Q, x_o_Q,num_k,num_orb,SQRT_DTAU,expr_fb_e,expr_fb_o,NUM_WALKERS,order_trunc,expr_h2_e,expr_h2_o):
     new_walkers = Walkers(np.zeros_like(walkers.slater_det), np.zeros_like(walkers.weights))
-    theta_mat = []
-    for i in range(len(walkers.slater_det)):
-        theta_mat.append(theta(trial, walkers.slater_det[i]))
-    theta_mat=np.array(theta_mat)
-    theta_mat = theta_mat.astype(np.complex64)
+    theta = biorthogonalize(config.backend, trial, walkers.slater_det)
 
-    fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat)
-    fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat)
+    fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta)
+    fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta)
 
     ####Boundary condition for rare events  based on: https://doi.org/10.1103/PhysRevB.80.214116
 
@@ -272,10 +268,10 @@ def main(precision, backend):
 
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
-    walkers_single = propagate_walkers(trial_det, walkers_single,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Qs,x_o_Qs,config.num_kpoint,config.num_orbital,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
+    walkers_single = propagate_walkers(config, trial_det, walkers_single,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Qs,x_o_Qs,config.num_kpoint,config.num_orbital,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
     print("single", np.allclose(walkers_single.slater_det, expected_slater_det), np.allclose(walkers_single.weights, expected_weights))
 
-    walkers_double = propagate_walkers(trial_det,walkers_double,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Q,x_o_Q,config.num_kpoint,config.num_orbital,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
+    walkers_double = propagate_walkers(config, trial_det,walkers_double,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Q,x_o_Q,config.num_kpoint,config.num_orbital,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
     print("double", np.allclose(walkers_double.slater_det, expected_slater_det), np.allclose(walkers_double.weights, expected_weights))
 
     E = measure_energy(config, trial_det, walkers, hamiltonian)
