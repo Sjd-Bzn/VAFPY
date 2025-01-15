@@ -1,11 +1,23 @@
 from dataclasses import dataclass
+import types
 
 import numpy as np
+import jax
+import jax.numpy as jnp
+import scipy
 from mpi4py import MPI
-from opt_einsum import contract_expression
+from opt_einsum import contract, contract_expression
 
 
-def main(precision):
+def main(precision, backend):
+    if backend == "numpy":
+        backend = np
+        backend.block_diag = scipy.linalg.block_diag
+    elif backend == "jax":
+        backend = jnp
+        backend.block_diag = jax.scipy.linalg.block_diag
+    else:
+        raise NotImplementedError(f"Selected {backend=} not implemented!")
     config = Configuration(
         num_walkers=10,
         num_kpoint=1,
@@ -14,6 +26,7 @@ def main(precision):
         singularity=0,
         comm=MPI.COMM_WORLD,
         precision=precision,
+        backend=backend,
     )
     hamiltonian = Hamiltonian(
         one_body=obtain_H1(config),
@@ -23,6 +36,7 @@ def main(precision):
     hamiltonian.setup_energy_expressions(config, trial_det)
 
     E = measure_energy(config, trial_det, walkers, hamiltonian)
+    print(E.dtype, E.__class__)
     expected = 631.88947 - 2.8974954e-09j
     print(E, np.isclose(E, expected))
     np.random.seed(1887431)
@@ -42,22 +56,23 @@ class Configuration:
     singularity: float  # singularity used for the G=0 component (fsg)
     comm: MPI.Comm  # communicator over which the walkers are distributed
     precision: str  # must be either single or double
+    backend: types.ModuleType  # module used to execute numpy-like operations
 
     @property
     def float_type(self):
         if self.precision == "single":
-            return np.single
+            return self.backend.single
         elif self.precision == "double":
-            return np.double
+            return self.backend.double
         else:
             raise NotImplementedError(self._precision_error_message())
 
     @property
     def complex_type(self):
         if self.precision == "single":
-            return np.csingle
+            return self.backend.csingle
         elif self.precision == "double":
-            return np.cdouble
+            return self.backend.cdouble
         else:
             raise NotImplementedError(self._precision_error_message())
 
@@ -86,8 +101,8 @@ class Hamiltonian:
             config.num_electron * config.num_kpoint,
         )
         h1_trial = trial_det.T @ self.one_body
-        alpha = np.einsum("pi, prg -> irg", trial_det, self.two_body)
-        alpha_T = np.einsum("pi, rpg -> irg", trial_det, self.two_body.conj())
+        alpha = contract("pi, prg -> irg", trial_det, self.two_body)
+        alpha_T = contract("pi, rpg -> irg", trial_det, self.two_body.conj())
         self._one_body_expression = contract_expression(
             "ip, wpi -> w", h1_trial, shape_theta, constants=[0], optimize="greedy"
         )
@@ -118,34 +133,30 @@ def obtain_H1(config):
     Reshape H1 (H1.npy shape is num_orb, num_orb, num_k
     we implement the k_points to the H1)
     """
-    input_h1 = np.load("H1.npy")
-    n = config.num_orbital * config.num_kpoint
-    output_h1 = np.zeros((n, n), dtype=config.complex_type)
-    for i in range(config.num_kpoint):
-        output_h1[
-            i * config.num_orbital : (i + 1) * config.num_orbital,
-            i * config.num_orbital : (i + 1) * config.num_orbital,
-        ] = input_h1[:, :, i]
-    return output_h1
+    input_h1 = config.backend.load("H1.npy").astype(config.complex_type)
+    output_h1 = config.backend.moveaxis(input_h1, -1, 0)
+    return config.backend.block_diag(*output_h1)
 
 
 def obtain_H2(config):
-    return np.moveaxis(np.load("H2.npy"), 0, -1).astype(config.complex_type)
+    input_h2 = config.backend.load("H2.npy").astype(config.complex_type)
+    return config.backend.moveaxis(input_h2, 0, -1)
 
 
 def initialize_determinant(config):
-    trial_det = np.eye(config.num_orbital, config.num_electron, dtype=config.float_type)
-    slater_det = np.array(config.num_walkers * [trial_det], dtype=config.complex_type)
+    shape = (config.num_orbital, config.num_electron)
+    trial_det = config.backend.eye(*shape, dtype=config.float_type)
+    slater_det = config.backend.array(config.num_walkers * [trial_det])
     walkers = Walkers(
-        slater_det=slater_det,
-        weights=np.ones(config.num_walkers, dtype=config.complex_type),
+        slater_det=slater_det.astype(config.complex_type),
+        weights=config.backend.ones(config.num_walkers, dtype=config.complex_type),
     )
     return trial_det, walkers
 
 
 def measure_energy(config, trial, walkers, hamiltonian):
     # compute energies locally
-    theta = biorthogonalize(trial, walkers.slater_det)
+    theta = biorthogonalize(config.backend, trial, walkers.slater_det)
     energy_one_body = hamiltonian.compute_one_body(theta)
     energy_hartree = hamiltonian.compute_hartree(theta)
     energy_exchange = hamiltonian.compute_exchange(theta)
@@ -153,17 +164,19 @@ def measure_energy(config, trial, walkers, hamiltonian):
     weighted_energy = energy @ walkers.weights
 
     # average over all ranks
-    sum_weights = np.sum(walkers.weights)
+    sum_weights = config.backend.sum(walkers.weights)
     weighted_energy_global = config.comm.allreduce(weighted_energy)
     sum_weights_global = config.comm.allreduce(sum_weights)
     return weighted_energy_global / sum_weights_global
 
 
-def biorthogonalize(trial, walkers):
-    inverse_overlap = np.linalg.inv(trial.T @ walkers)
-    return np.einsum("wpi, wij -> wpj", walkers, inverse_overlap)
+def biorthogonalize(backend, trial, walkers):
+    inverse_overlap = backend.linalg.inv(trial.T @ walkers)
+    return contract("wpi, wij -> wpj", walkers, inverse_overlap)
 
 
 if __name__ == "__main__":
-    main("single")
-    main("double")
+    main("single", "numpy")
+    main("double", "numpy")
+    main("single", "jax")
+    main("double", "jax")
