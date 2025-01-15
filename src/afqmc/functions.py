@@ -66,6 +66,9 @@ def avg_A_Q(trial_0,trial,h2,q_list,q_selected,num_orb,num_electrons_up):
         result += contract('iiG->G',contract('nrG,rm->nmG',alpha,theta_full[(K2-1)*num_orb:K2*num_orb,(K1-1)*num_electrons_up:K1*num_electrons_up]))
     return 2*result
 
+def theta(trial, walker):
+    return np.dot(walker, np.linalg.inv(overlap(trial,walker)))
+
 def get_k1s_k2s(q_list,q_selected):
     '''
     It retuirns a list of tuples (k1s,k2s) corrsponding to q_selected.
@@ -138,30 +141,26 @@ def propagate_walkers(config, trial,walkers,h_0,h_1,h1_exp_half, x_Q,expr_fb,exp
 
     fb_Q[abs(fb_Q)>1] = 1.0
 
-    h_2 = expr_h2(x_Q-fb_Q.T)
+    propagate_h0 = np.exp(-config.timestep * h_0)
+    h_2 = sqrt_tau * 1j * expr_h2(x_Q - fb_Q.T)
     print('h_2 type', h_2.dtype)
     for i in range(config.num_walkers):
-        if config.propagator == 'Old':
-            h= h_1 + sqrt_tau * 1j *h_2 [:,:,i]
-            addend = walkers.slater_det[i]
-            for j in range(config.order_propagation+1):
-                new_walkers.slater_det[i] += addend
-                addend = h@addend/(j + 1)
-
 ########       Different propagators Taylor, S1, and S2
 
-        elif config.propagator == 'Taylor':
-            prop_taylor = np.exp(-config.timestep * h_0) * exp_Taylor(config, h)
-            new_walkers.slater_det[i] = prop_taylor @ walkers.slater_det[i]
+        if config.propagator == 'Taylor':
+            h = h_1 + h_2 [:,:,i]
+            new_walkers.slater_det[i] = propagate_h0 * apply_taylor(config, h, walkers.slater_det[i])
 
         elif config.propagator == 'S1':
-
-            prop_S1 = np.exp(-config.timestep * h_0) * expm(-config.timestep * h_1) * exp_Taylor(config, sqrt_tau * 1j * h_2[:, :, i])
-            new_walkers.slater_det[i] = prop_S1 @ walkers.slater_det[i]
+            full_step_with_h2 = apply_taylor(config, h_2[:,:,i], walkers.slater_det[i])
+            full_step_with_h1 = expm(-config.timestep * h_1) * full_step_with_h2
+            new_walkers.slater_det[i] = propagate_h0 * full_step_with_h1
 
         elif config.propagator == 'S2':
-            prop_S2 = h1_exp_half@exp_Taylor(config, sqrt_tau*1j*h_2[:, :, i])@h1_exp_half
-            new_walkers.slater_det[i] = prop_S2 @ walkers.slater_det[i]
+            half_step_with_h1 = h1_exp_half @ walkers.slater_det[i]
+            full_step_with_h2 = apply_taylor(config, h_2[:,:,i], half_step_with_h1)
+            new_walkers.slater_det[i] = propagate_h0 * h1_exp_half @ full_step_with_h2
+
         else:
             raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
 
@@ -173,17 +172,14 @@ def propagate_walkers(config, trial,walkers,h_0,h_1,h1_exp_half, x_Q,expr_fb,exp
         new_walkers.weights[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_Q[:,i],fb_Q[i])-np.dot(fb_Q[i],fb_Q[i]/2))))* max(0,np.cos(alpha))*walkers.weights[i]
     return new_walkers
 
-def theta(trial, walker):
-    return np.dot(walker, np.linalg.inv(overlap(trial,walker)))
 
-
-def exp_Taylor(config, mat):
-    OUT = np.eye(config.num_orbital * config.num_kpoint, dtype = 'complex128')
-    C = np.eye(config.num_orbital * config.num_kpoint)
-    for i in range (config.order_propagation):
-      C = mat@C/(i+1)
-      OUT += C
-    return OUT
+def apply_taylor(config, matrix, slater_det):
+    result = slater_det.copy()
+    addend = slater_det
+    for i in range(config.order_propagation):
+        addend = matrix @ addend / (i + 1)
+        result += addend
+    return result
 
 def overlap(left_slater_det, right_slater_det):
     '''
