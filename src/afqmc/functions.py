@@ -127,10 +127,10 @@ def gen_A_o_full(h2):
     return a_o
 
 
-def update_hyb_single(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h1_exp_half,propagator, x_e_Q, x_o_Q,num_k,num_orb,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,NUM_WALKERS,order_trunc,expr_h2_e,expr_h2_o):
+def propagate_walkers(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h1_exp_half,propagator, x_e_Q, x_o_Q,num_k,num_orb,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,NUM_WALKERS,order_trunc,expr_h2_e,expr_h2_o):
     NG = num_g
-    walker_mat = walker_mat.astype(np.complex64)
-    walker_weight = walker_weight.astype(np.complex64)
+    # walker_mat = walker_mat.astype(np.complex64)
+    # walker_weight = walker_weight.astype(np.complex64)
     new_walker_mat = np.zeros_like(walker_mat)
     new_walker_weight = np.zeros_like(walker_weight)
     theta_mat = []
@@ -174,7 +174,7 @@ def update_hyb_single(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_ta
 ##############################################################################################################################
     h_2 = expr_h2_e(x_e_Q-fb_e_Q.T)+expr_h2_o(x_o_Q-fb_o_Q.T)
     #h_2 = h_mf.two_body_e@(x_e_Q-fb_e_Q.T) + h_mf.two_body_o@(x_o_Q-fb_o_Q.T)
-    # print('h_2 type', h_2.dtype)
+    print('h_2 type', h_2.dtype)
     for i in range(0,NUM_WALKERS):
         if propagator == 'Old':
             h= h_1 + SQRT_DTAU * 1j *h_2 [:,:,i]
@@ -193,95 +193,6 @@ def update_hyb_single(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_ta
         elif propagator == 'S1':
 
             prop_S1 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1) * exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i], num_k, num_orb, order_trunc)
-            new_walker_mat[i] = prop_S1 @ walker_mat[i]
-
-        elif propagator == 'S2':
-            prop_S2 = h1_exp_half@exp_Taylor(SQRT_DTAU*1j*h_2[:, :, i],num_k,num_orb,order_trunc)@h1_exp_half
-    #        prop_S2 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1 / 2) @ exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i]) @ expm(-d_tau * h_1 / 2)
-            new_walker_mat[i] = prop_S2 @ walker_mat[i]
-       #     print('h_2 type', h_2.dtype)
-       #     print('h1  type', h1_exp_half.dtype)
-       #     print('walker type', new_walker_mat.dtype)
-       #     print('prop s2 type', prop_S2.dtype)
-        else:
-            raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
-
-        ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i]))**2 / np.linalg.det(overlap(trial,walker_mat[i]))**2
-        ##ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i])) / np.linalg.det(overlap(trial,walker_mat[i]))
-        alpha = phase(ovrlap_ratio)
-
-####new_weight
-
-        new_walker_weight[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_e_Q[:,i],fb_e_Q[i])-np.dot(fb_e_Q[i],fb_e_Q[i]/2))*np.exp(np.dot(x_o_Q[:,i], fb_o_Q[i])-np.dot(fb_o_Q[i],fb_o_Q[i]/2))))* max(0,np.cos(alpha))*walker_weight[i]
-    #print('weight type', new_walker_weight.dtype)
-    return new_walker_mat, new_walker_weight
-
-def update_hyb_double(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0,h1_exp_half,propagator, x_e_Q, x_o_Q,num_k,num_orb,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,NUM_WALKERS,order_trunc,expr_h2_e,expr_h2_o):
-    NG = num_g
-    #walker_mat = walker_mat.astype(np.complex64)
-    #walker_weight = walker_weight.astype(np.complex64)
-    new_walker_mat = np.zeros_like(walker_mat)
-    new_walker_weight = np.zeros_like(walker_weight)
-    theta_mat = []
-    for i in range(NUM_WALKERS):
-        theta_mat.append(theta(trial, walker_mat[i]))
-    theta_mat=np.array(theta_mat)
-    theta_mat = theta_mat
-
-    #fb_e_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, _e,optimize='greedy')
-    #fb_o_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, alpha_full_o,optimize='greedy')
-
-    fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat)
-    fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat)
-
-    ####Boundary condition for rare events  based on:https://doi.org/10.1103/PhysRevB.80.214116
-
-    fb_e_Q[abs(fb_e_Q)>1] = 1.0
-    fb_o_Q[abs(fb_o_Q)>1] = 1.0
-
-   #####################################################################################################
-    # #x_e_Q = rng.random(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-    # #x_o_Q = rng.random(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-    # x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-    # x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-
-
-##########################################################################################################################
-#    x_e_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(comm.Get_size(),NG,NUM_WALKERS)[comm.Get_rank()]
-#    x_o_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(comm.Get_size(),NG,NUM_WALKERS)[comm.Get_rank()]
-#    x_e_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(NG,NUM_WALKERS,comm.Get_size())[:,:,comm.Get_rank()]
-#    x_o_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(NG,NUM_WALKERS,comm.Get_size())[:,:,comm.Get_rank()]
-#    global first_call
-#    if first_call:
-#        first_call = False
-#    else:
-#        with open(f"size_{comm.Get_size()}_rank_{comm.Get_rank()}", "w") as f:
-#            for i in range(NUM_WALKERS):
-#                f.write(f"{comm.Get_size() * i + comm.Get_rank()} {x_e_Q[:,i]}\n")
-#        comm.barrier()
-#        exit()
-##############################################################################################################################
-    h_2 = expr_h2_e(x_e_Q-fb_e_Q.T)+expr_h2_o(x_o_Q-fb_o_Q.T)
-    #h_2 = h_mf.two_body_e@(x_e_Q-fb_e_Q.T) + h_mf.two_body_o@(x_o_Q-fb_o_Q.T)
-    # print('h_2 type', h_2.dtype)
-    for i in range(len(walker_mat)):
-        if propagator == 'Old':
-            h= h_1 + SQRT_DTAU * 1j *h_2 [:,:,i]
-            addend = walker_mat[i]
-            for j in range(order_trunc+1):
-                new_walker_mat[i] += addend
-                addend = h@addend/(j + 1)
-
-
-########       Different propagators Taylor, S1, and S2
-
-        elif propagator == 'Taylor':
-            prop_taylor = np.exp(d_tau * (-h_0 + e_0)) * exp_Taylor(h,num_k,num_orb,order_trunc)
-            new_walker_mat[i] = prop_taylor @ walker_mat[i]
-
-        elif propagator == 'S1':
-
-            prop_S1 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1) * exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i],num_k,num_orb,order_trunc)
             new_walker_mat[i] = prop_S1 @ walker_mat[i]
 
         elif propagator == 'S2':
@@ -399,10 +310,10 @@ def main(precision, backend):
 
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
-    walkers_single.slater_det,walkers_single.weights = update_hyb_single(trial_det, trial_det,walkers_single.slater_det,walkers_single.weights,ql,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Qs,x_o_Qs,config.num_kpoint,config.num_orbital,config.num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
+    walkers_single.slater_det,walkers_single.weights = propagate_walkers(trial_det, trial_det,walkers_single.slater_det,walkers_single.weights,ql,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Qs,x_o_Qs,config.num_kpoint,config.num_orbital,config.num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
     print("single", np.allclose(walkers_single.slater_det, expected_slater_det), np.allclose(walkers_single.weights, expected_weights))
 
-    walkers_double.slater_det,walkers_double.weights = update_hyb_double(trial_det, trial_det,walkers_double.slater_det,walkers_double.weights,ql,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Q,x_o_Q,config.num_kpoint,config.num_orbital,config.num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
+    walkers_double.slater_det,walkers_double.weights = propagate_walkers(trial_det, trial_det,walkers_double.slater_det,walkers_double.weights,ql,0,hamiltonian.one_body,config.timestep,0,H1_self_half_exp,config.propagator,x_e_Q,x_o_Q,config.num_kpoint,config.num_orbital,config.num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,config.order_propagation,expr_h2_e,expr_h2_o)
     print("double", np.allclose(walkers_double.slater_det, expected_slater_det), np.allclose(walkers_double.weights, expected_weights))
 
     E = measure_energy(config, trial_det, walkers, hamiltonian)
