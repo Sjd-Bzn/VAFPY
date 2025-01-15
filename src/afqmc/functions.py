@@ -356,14 +356,7 @@ def main(precision, backend):
     num_g = 12039
     order_trunc = 6
 
-    hamil = HAMILTONIAN
-    H1 = np.array(read_datafile("H1.npy"))
-    h1 = reshape_H1(H1, config.num_kpoint, config.num_orbital)
-    hamil.one_body = h1
-    H2 = np.array(read_datafile("H2.npy"))
-    h2 = np.moveaxis(H2, 0, -1)
-    hamil.two_body = h2
-    h2_t = np.einsum('prG->rpG', hamil.two_body.conj())
+    h2_t = np.einsum('prG->rpG', hamiltonian.two_body.conj())
 
     ql = []
     for i in range(1,config.num_kpoint+1):
@@ -380,11 +373,11 @@ def main(precision, backend):
     x_o_Qs = x_o_Q.astype(np.single)
 
     hamil_MF = HAMILTONIAN_MF
-    h2_af_MF_sub = A_af_MF_sub(trial_det,trial_det,hamil.two_body,ql,config.num_kpoint,config.num_orbital,config.num_electron)
-    L_0 = mean_field(hamil.two_body, config.num_electron, config.num_orbital, config.num_kpoint)
+    h2_af_MF_sub = A_af_MF_sub(trial_det,trial_det,hamiltonian.two_body,ql,config.num_kpoint,config.num_orbital,config.num_electron)
+    L_0 = mean_field(hamiltonian.two_body, config.num_electron, config.num_orbital, config.num_kpoint)
     H_zero= np.einsum("g, g->", L_0, L_0 )/2/2/config.num_kpoint
     hamil_MF.zero_body= H_zero
-    hamil_MF.one_body = H_1_mf(trial_det,trial_det,hamil.two_body,h2_t,ql,hamil.one_body,config.num_kpoint,config.num_orbital,config.num_electron)
+    hamil_MF.one_body = H_1_mf(trial_det,trial_det,hamiltonian.two_body,h2_t,ql,hamiltonian.one_body,config.num_kpoint,config.num_orbital,config.num_electron)
     hamil_MF.two_body_e = gen_A_e_full(h2_af_MF_sub)
     hamil_MF.two_body_o = gen_A_o_full(h2_af_MF_sub)
     ALPHA_E = contract('ip,prG->irG',trial_det.T,hamil_MF.two_body_e)
@@ -396,7 +389,7 @@ def main(precision, backend):
     expr_h2_e = contract_expression('ijG,GN->ijN',hamil_MF.two_body_e.astype(np.complex64),(num_g,config.num_walkers),constants=[0],optimize='greedy')
     expr_h2_o = contract_expression('ijG,GN->ijN',hamil_MF.two_body_o.astype(np.complex64),(num_g,config.num_walkers),constants=[0],optimize='greedy')
 
-    h_self = -contract('ijG,jkG->ik',hamil.two_body,h2_t)/2#/num_k
+    h_self = -contract('ijG,jkG->ik',hamiltonian.two_body,h2_t)/2#/num_k
     H_1_self = -D_TAU * (hamil_MF.one_body+h_self)
     H1_self_half_exp = expm(H_1_self/2).astype(np.complex64)
 
@@ -412,10 +405,10 @@ def main(precision, backend):
 
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
-    walkers_old.mats_up_single,walkers_old.weights_single = update_hyb_single(trial_det, trial_det,walkers_old.mats_up_single,walkers_old.weights_single,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Qs,x_o_Qs,config.num_kpoint,config.num_orbital,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,order_trunc,expr_h2_e,expr_h2_o)
+    walkers_old.mats_up_single,walkers_old.weights_single = update_hyb_single(trial_det, trial_det,walkers_old.mats_up_single,walkers_old.weights_single,ql,0,hamiltonian.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Qs,x_o_Qs,config.num_kpoint,config.num_orbital,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,order_trunc,expr_h2_e,expr_h2_o)
     print("single", np.allclose(walkers_old.mats_up_single, expected_slater_det), np.allclose(walkers_old.weights_single, expected_weights))
 
-    walkers_old.mats_up_double,walkers_old.weights_double = update_hyb_double(trial_det, trial_det,walkers_old.mats_up_double,walkers_old.weights_double,ql,0,hamil.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Q,x_o_Q,config.num_kpoint,config.num_orbital,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,order_trunc,expr_h2_e,expr_h2_o)
+    walkers_old.mats_up_double,walkers_old.weights_double = update_hyb_double(trial_det, trial_det,walkers_old.mats_up_double,walkers_old.weights_double,ql,0,hamiltonian.one_body,D_TAU,0,H1_self_half_exp,propagator,x_e_Q,x_o_Q,config.num_kpoint,config.num_orbital,num_g,SQRT_DTAU,expr_fb_e,expr_fb_o,config.num_walkers,order_trunc,expr_h2_e,expr_h2_o)
     print("double", np.allclose(walkers_old.mats_up_double, expected_slater_det), np.allclose(walkers_old.weights_double, expected_weights))
 
     E = measure_energy(config, trial_det, walkers, hamiltonian)
