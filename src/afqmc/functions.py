@@ -69,6 +69,14 @@ def avg_A_Q(trial_0,trial,h2,q_list,q_selected,num_orb,num_electrons_up):
 def theta(trial, walker):
     return np.dot(walker, np.linalg.inv(overlap(trial,walker)))
 
+def overlap(left_slater_det, right_slater_det):
+    '''
+    It computes the overlap between two Slater determinants.
+    '''
+    overlap_mat = np.dot(left_slater_det.transpose(),right_slater_det)
+    #overlap_mat = np.array([right_slater_det[num_orb*k:num_orb*k+num_electrons_up] for k in range(num_k)]).reshape(num_k*num_electrons_up,num_k*num_electrons_up)
+    return overlap_mat
+
 def get_k1s_k2s(q_list,q_selected):
     '''
     It retuirns a list of tuples (k1s,k2s) corrsponding to q_selected.
@@ -164,12 +172,13 @@ def propagate_walkers(config, trial,walkers,h_0,h_1,h1_exp_half, x_Q,expr_fb,exp
         else:
             raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
 
-        ovrlap_ratio = np.linalg.det(overlap(trial,new_walkers.slater_det[i]))**2 / np.linalg.det(overlap(trial,walkers.slater_det[i]))**2
-        alpha = phase(ovrlap_ratio)
+        new_overlap = project_trial(config.backend, trial, new_walkers.slater_det[i])
+        old_overlap = project_trial(config.backend, trial, walkers.slater_det[i])
+        overlap_ratio = new_overlap / old_overlap
+        alpha = phase(overlap_ratio)
 
 ####new_weight
-
-        new_walkers.weights[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_Q[:,i],fb_Q[i])-np.dot(fb_Q[i],fb_Q[i]/2))))* max(0,np.cos(alpha))*walkers.weights[i]
+        new_walkers.weights[i] = abs(overlap_ratio*(np.exp( np.dot(x_Q[:,i],fb_Q[i])-np.dot(fb_Q[i],fb_Q[i]/2))))* max(0,np.cos(alpha))*walkers.weights[i]
     return new_walkers
 
 
@@ -181,13 +190,6 @@ def apply_taylor(config, matrix, slater_det):
         result += addend
     return result
 
-def overlap(left_slater_det, right_slater_det):
-    '''
-    It computes the overlap between two Slater determinants.
-    '''
-    overlap_mat = np.dot(left_slater_det.transpose(),right_slater_det)
-    #overlap_mat = np.array([right_slater_det[num_orb*k:num_orb*k+num_electrons_up] for k in range(num_k)]).reshape(num_k*num_electrons_up,num_k*num_electrons_up)
-    return overlap_mat
 
 def main(precision, backend):
     if backend == "numpy":
@@ -407,10 +409,13 @@ def measure_energy(config, trial, walkers, hamiltonian):
     return weighted_energy_global / sum_weights_global
 
 
-def biorthogonalize(backend, trial, walkers):
-    inverse_overlap = backend.linalg.inv(trial.T @ walkers)
-    return contract("wpi, wij -> wpj", walkers, inverse_overlap)
+def biorthogonalize(backend, trial, slater_det):
+    inverse_overlap = backend.linalg.inv(trial.T @ slater_det)
+    return contract("wpi, wij -> wpj", slater_det, inverse_overlap)
 
+def project_trial(backend, trial, slater_det):
+    overlap = trial.T @ slater_det
+    return backend.linalg.det(overlap)**2
 
 if __name__ == "__main__":
     # main("single", "numpy")
