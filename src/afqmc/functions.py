@@ -175,11 +175,11 @@ def main(precision, backend):
     x_o_Q = np.random.randn(config.num_g, config.num_walkers)
     x_e_Qs = x_e_Q.astype(np.single)
     x_o_Qs = x_o_Q.astype(np.single)
-    x_Q = np.concatenate((x_e_Qs, x_o_Qs), axis=0)
+    hamiltonian.x_Q = np.concatenate((x_e_Qs, x_o_Qs), axis=0)
 
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
-    new_walkers = propagate_walkers(config, trial_det, walkers, hamiltonian, x_Q)
+    new_walkers = propagate_walkers(config, trial_det, walkers, hamiltonian)
     check_det = np.allclose(new_walkers.slater_det, expected_slater_det, atol=1e-7)
     check_weight = np.allclose(new_walkers.weights, expected_weights)
     print("propagation", check_det, check_weight)
@@ -287,6 +287,7 @@ class Hamiltonian:
 
         two_body = self.compute_mean_field_two_body(config, trial_det, ql)
         alpha = contract("pi, prg -> irg", trial_det, two_body)
+        self._sqrt_tau = config.backend.sqrt(config.timestep).astype(config.float_type)
         self.expr_fb = contract_expression('Nri,irG->NG',(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),alpha,constants=[1],optimize='greedy')
         self.expr_h2 = contract_expression('ijG,GN->ijN',two_body,(2*config.num_g,config.num_walkers),constants=[0],optimize='greedy')
 
@@ -298,6 +299,14 @@ class Hamiltonian:
 
     def compute_exchange(self, theta):
         return -self._exchange_expression(theta, theta) - self._singularity_correction
+
+    def create_auxiliary_field(self, theta):
+        fb_Q = -2j * self._sqrt_tau * self.expr_fb(theta)
+        ####Boundary condition for rare events  based on: https://doi.org/10.1103/PhysRevB.80.214116
+        fb_Q[abs(fb_Q)>1] = 1.0
+        arg = contract("gw, wg -> w", self.x_Q - 0.5 * fb_Q.T, fb_Q)
+        field = self._sqrt_tau * 1j * self.expr_h2(self.x_Q - fb_Q.T)
+        return field, np.exp(arg)
 
     def compute_mean_field_one_body(self, config, trial_det, ql):
         # interface to legacy code
@@ -373,30 +382,25 @@ def measure_energy(config, trial, walkers, hamiltonian):
     return weighted_energy_global / sum_weights_global
 
 
-def propagate_walkers(config, trial, walkers, hamiltonian, x_Q):
+def propagate_walkers(config, trial, walkers, hamiltonian):
     new_walkers = Walkers(np.zeros_like(walkers.slater_det), np.zeros_like(walkers.weights))
     theta = biorthogonalize(config.backend, trial, walkers.slater_det)
-    sqrt_tau = np.sqrt(config.timestep)
-    fb_Q = -2j*sqrt_tau*hamiltonian.expr_fb(theta)
-    ####Boundary condition for rare events  based on: https://doi.org/10.1103/PhysRevB.80.214116
-    fb_Q[abs(fb_Q)>1] = 1.0
-
-    h_2 = sqrt_tau * 1j * hamiltonian.expr_h2(x_Q - fb_Q.T)
-    print('h_2 type', h_2.dtype)
+    h2, importance = hamiltonian.create_auxiliary_field(theta)
+    print('h_2 type', h2.dtype)
 
     if config.propagator == "Taylor":
-        h = hamiltonian.h1 + h_2
+        h = hamiltonian.h1 + h2
         full_step_with_h1_and_h2 = apply_taylor(config, h, walkers.slater_det)
         new_walkers.slater_det = hamiltonian.exp_h0 * full_step_with_h1_and_h2
 
     elif config.propagator == "S1":
-        full_step_with_h2 = apply_taylor(config, h_2, half_step_with_h1)
+        full_step_with_h2 = apply_taylor(config, h2, half_step_with_h1)
         full_step_with_h1 = hamiltonian.exp_h1 @ full_step_with_h2
         new_walkers.slater_det = hamiltonian.exp_h0 * full_step_with_h1
 
     elif config.propagator == "S2":
         half_step_with_h1 = hamiltonian.exp_h1_half @ walkers.slater_det
-        full_step_with_h2 = apply_taylor(config, h_2, half_step_with_h1)
+        full_step_with_h2 = apply_taylor(config, h2, half_step_with_h1)
         half_step_with_h1 = hamiltonian.exp_h1_half @ full_step_with_h2
         new_walkers.slater_det = hamiltonian.exp_h0 * half_step_with_h1
 
@@ -407,9 +411,8 @@ def propagate_walkers(config, trial, walkers, hamiltonian, x_Q):
     old_overlap = project_trial(config.backend, trial, walkers.slater_det)
     overlap_ratio = new_overlap / old_overlap
     cos_alpha = np.cos(config.backend.angle(overlap_ratio))
-    arg = contract("gw, wg -> w", x_Q - 0.5 * fb_Q.T, fb_Q)
-    importance = np.abs(overlap_ratio * np.exp(arg)) * np.maximum(0, cos_alpha)
-    new_walkers.weights = importance * walkers.weights
+    factor = np.abs(overlap_ratio * importance) * np.maximum(0, cos_alpha)
+    new_walkers.weights = factor * walkers.weights
 
     return new_walkers
 
