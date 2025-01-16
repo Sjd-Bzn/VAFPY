@@ -210,11 +210,10 @@ def main(precision, backend):
 
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
-    new_walkers = propagate_walkers(config, trial_det, walkers, 0, hamiltonian.one_body,H1_self_half_exp, x_Q, expr_fb, expr_h2)
-    print("propagation", np.allclose(new_walkers.slater_det, expected_slater_det), np.allclose(new_walkers.weights, expected_weights))
-
-    # walkers_double = propagate_walkers(config, trial_det,walkers_double,0,hamiltonian.one_body,H1_self_half_exp,x_Q,expr_fb,expr_h2)
-    # print("double", np.allclose(walkers_double.slater_det, expected_slater_det), np.allclose(walkers_double.weights, expected_weights))
+    new_walkers = propagate_walkers(config, trial_det, walkers, hamiltonian, x_Q, expr_fb, expr_h2)
+    check_det = np.allclose(new_walkers.slater_det, expected_slater_det, atol=1e-7)
+    check_weight = np.allclose(new_walkers.weights, expected_weights)
+    print("propagation", check_det, check_weight)
 
     E = measure_energy(config, trial_det, walkers, hamiltonian)
     print(E.dtype, E.__class__)
@@ -301,6 +300,20 @@ class Hamiltonian:
         self._singularity_correction = (
             config.num_electron * config.num_kpoint * config.singularity
         )
+        h_sic = -contract('ijG, kjG -> ik', self.two_body, self.two_body.conj()) / 2
+        h2_t = np.einsum('prG->rpG', self.two_body.conj())
+        ql = []
+        for i in range(1,config.num_kpoint+1):
+            for j in range(1,config.num_kpoint+1):
+                for k in range(1,config.num_kpoint+1):
+                    if abs(i-j)==k-1:
+                        ql.append([i,j,k])
+        ql = np.array(ql)
+        one_body = H_1_mf(trial_det,trial_det,self.two_body,h2_t,ql,self.one_body,config.num_kpoint,config.num_orbital,config.num_electron)
+        h1 = one_body + h_sic
+        self._h1 = h1
+        self._exp_h1 = expm(-h1 * config.timestep)
+        self._exp_h1_half = expm(-0.5 * h1 * config.timestep)
 
     def compute_one_body(self, theta):
         return 2 * self._one_body_expression(theta)
@@ -310,6 +323,22 @@ class Hamiltonian:
 
     def compute_exchange(self, theta):
         return -self._exchange_expression(theta, theta) - self._singularity_correction
+
+    @property
+    def exp_h0(self):
+        return 1
+
+    @property
+    def h1(self):
+        return self._h1
+
+    @property
+    def exp_h1(self):
+        return self._exp_h1
+
+    @property
+    def exp_h1_half(self):
+        return self._exp_h1_half
 
 
 def obtain_H1(config):
@@ -354,7 +383,7 @@ def measure_energy(config, trial, walkers, hamiltonian):
     return weighted_energy_global / sum_weights_global
 
 
-def propagate_walkers(config, trial,walkers,h_0,h_1,h1_exp_half, x_Q,expr_fb,expr_h2):
+def propagate_walkers(config, trial, walkers, hamiltonian, x_Q,expr_fb,expr_h2):
     new_walkers = Walkers(np.zeros_like(walkers.slater_det), np.zeros_like(walkers.weights))
     theta = biorthogonalize(config.backend, trial, walkers.slater_det)
     sqrt_tau = np.sqrt(config.timestep)
@@ -362,24 +391,24 @@ def propagate_walkers(config, trial,walkers,h_0,h_1,h1_exp_half, x_Q,expr_fb,exp
     ####Boundary condition for rare events  based on: https://doi.org/10.1103/PhysRevB.80.214116
     fb_Q[abs(fb_Q)>1] = 1.0
 
-    propagate_h0 = np.exp(-config.timestep * h_0)
     h_2 = sqrt_tau * 1j * expr_h2(x_Q - fb_Q.T)
     print('h_2 type', h_2.dtype)
 
     if config.propagator == "Taylor":
-        h = h_1 + h_2
+        h = hamiltonian.h1 + h_2
         full_step_with_h1_and_h2 = apply_taylor(config, h, walkers.slater_det)
-        new_walkers.slater_det = propagate_h0 * full_step_with_h1_and_h2
+        new_walkers.slater_det = hamiltonian.exp_h0 * full_step_with_h1_and_h2
 
     elif config.propagator == "S1":
         full_step_with_h2 = apply_taylor(config, h_2, half_step_with_h1)
-        full_step_with_h1 = expm(-config.timestep * h_1) @ full_step_with_h2
-        new_walkers.slater_det = propagate_h0 * full_step_with_h1
+        full_step_with_h1 = hamiltonian.exp_h1 @ full_step_with_h2
+        new_walkers.slater_det = hamiltonian.exp_h0 * full_step_with_h1
 
     elif config.propagator == "S2":
-        half_step_with_h1 = h1_exp_half @ walkers.slater_det
+        half_step_with_h1 = hamiltonian.exp_h1_half @ walkers.slater_det
         full_step_with_h2 = apply_taylor(config, h_2, half_step_with_h1)
-        new_walkers.slater_det = propagate_h0 * h1_exp_half @ full_step_with_h2
+        half_step_with_h1 = hamiltonian.exp_h1_half @ full_step_with_h2
+        new_walkers.slater_det = hamiltonian.exp_h0 * half_step_with_h1
 
     else:
         raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
