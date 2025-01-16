@@ -170,7 +170,12 @@ def main(precision, backend):
     trial_det, walkers = initialize_determinant(config)
     hamiltonian.setup_energy_expressions(config, trial_det)
 
-    h2_t = np.einsum('prG->rpG', hamiltonian.two_body.conj())
+    np.random.seed(34841311)
+    x_e_Q = np.random.randn(config.num_g, config.num_walkers)
+    x_o_Q = np.random.randn(config.num_g, config.num_walkers)
+    x_e_Qs = x_e_Q.astype(np.single)
+    x_o_Qs = x_o_Q.astype(np.single)
+    x_Q = np.concatenate((x_e_Qs, x_o_Qs), axis=0)
 
     ql = []
     for i in range(1,config.num_kpoint+1):
@@ -179,20 +184,10 @@ def main(precision, backend):
                 if abs(i-j)==k-1:
                     ql.append([i,j,k])
     ql = np.array(ql)
-
-    np.random.seed(34841311)
-    x_e_Q = np.random.randn(config.num_g, config.num_walkers)
-    x_o_Q = np.random.randn(config.num_g, config.num_walkers)
-    x_e_Qs = x_e_Q.astype(np.single)
-    x_o_Qs = x_o_Q.astype(np.single)
-    x_Q = np.concatenate((x_e_Qs, x_o_Qs), axis=0)
-
     hamil_MF = HAMILTONIAN_MF
     h2_af_MF_sub = A_af_MF_sub(trial_det,trial_det,hamiltonian.two_body,ql,config.num_kpoint,config.num_orbital,config.num_electron)
-    L_0 = mean_field(hamiltonian.two_body, config.num_electron, config.num_orbital, config.num_kpoint)
-    H_zero= np.einsum("g, g->", L_0, L_0 )/2/2/config.num_kpoint
-    hamil_MF.zero_body= H_zero
-    hamil_MF.one_body = H_1_mf(trial_det,trial_det,hamiltonian.two_body,h2_t,ql,hamiltonian.one_body,config.num_kpoint,config.num_orbital,config.num_electron)
+    hamil_MF.zero_body= None
+    hamil_MF.one_body = None
     hamil_MF.two_body_e = gen_A_e_full(h2_af_MF_sub)
     hamil_MF.two_body_o = gen_A_o_full(h2_af_MF_sub)
     ALPHA_E = contract('ip,prG->irG',trial_det.T,hamil_MF.two_body_e)
@@ -203,10 +198,6 @@ def main(precision, backend):
     expr_fb = contract_expression('Nri,irG->NG',(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),ALPHA,constants=[1],optimize='greedy')
     two_body = np.concatenate((hamil_MF.two_body_e,hamil_MF.two_body_o), axis=-1).astype(np.complex64)
     expr_h2 = contract_expression('ijG,GN->ijN',two_body,(2*config.num_g,config.num_walkers),constants=[0],optimize='greedy')
-
-    h_self = -contract('ijG,jkG->ik',hamiltonian.two_body,h2_t)/2#/num_k
-    H_1_self = -config.timestep * (hamil_MF.one_body+h_self)
-    H1_self_half_exp = expm(H_1_self/2).astype(np.complex64)
 
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
@@ -300,17 +291,9 @@ class Hamiltonian:
         self._singularity_correction = (
             config.num_electron * config.num_kpoint * config.singularity
         )
+        h_mf = self.compute_mean_field(config, trial_det)
         h_sic = -contract('ijG, kjG -> ik', self.two_body, self.two_body.conj()) / 2
-        h2_t = np.einsum('prG->rpG', self.two_body.conj())
-        ql = []
-        for i in range(1,config.num_kpoint+1):
-            for j in range(1,config.num_kpoint+1):
-                for k in range(1,config.num_kpoint+1):
-                    if abs(i-j)==k-1:
-                        ql.append([i,j,k])
-        ql = np.array(ql)
-        one_body = H_1_mf(trial_det,trial_det,self.two_body,h2_t,ql,self.one_body,config.num_kpoint,config.num_orbital,config.num_electron)
-        h1 = one_body + h_sic
+        h1 = self.one_body + h_mf + h_sic
         self._h1 = h1
         self._exp_h1 = expm(-h1 * config.timestep)
         self._exp_h1_half = expm(-0.5 * h1 * config.timestep)
@@ -323,6 +306,19 @@ class Hamiltonian:
 
     def compute_exchange(self, theta):
         return -self._exchange_expression(theta, theta) - self._singularity_correction
+
+    def compute_mean_field(self, config, trial_det):
+        # interface to legacy code
+        h2_t = np.einsum('prG->rpG', self.two_body.conj())
+        ql = []
+        for i in range(1,config.num_kpoint+1):
+            for j in range(1,config.num_kpoint+1):
+                for k in range(1,config.num_kpoint+1):
+                    if abs(i-j)==k-1:
+                        ql.append([i,j,k])
+        ql = np.array(ql)
+        h1_legacy = H_1_mf(trial_det,trial_det,self.two_body,h2_t,ql,self.one_body,config.num_kpoint,config.num_orbital,config.num_electron)
+        return config.backend.array(h1_legacy - self.one_body, dtype=config.complex_type)
 
     @property
     def exp_h0(self):
