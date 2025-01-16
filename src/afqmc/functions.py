@@ -177,31 +177,9 @@ def main(precision, backend):
     x_o_Qs = x_o_Q.astype(np.single)
     x_Q = np.concatenate((x_e_Qs, x_o_Qs), axis=0)
 
-    ql = []
-    for i in range(1,config.num_kpoint+1):
-        for j in range(1,config.num_kpoint+1):
-            for k in range(1,config.num_kpoint+1):
-                if abs(i-j)==k-1:
-                    ql.append([i,j,k])
-    ql = np.array(ql)
-    hamil_MF = HAMILTONIAN_MF
-    h2_af_MF_sub = A_af_MF_sub(trial_det,trial_det,hamiltonian.two_body,ql,config.num_kpoint,config.num_orbital,config.num_electron)
-    hamil_MF.zero_body= None
-    hamil_MF.one_body = None
-    hamil_MF.two_body_e = gen_A_e_full(h2_af_MF_sub)
-    hamil_MF.two_body_o = gen_A_o_full(h2_af_MF_sub)
-    ALPHA_E = contract('ip,prG->irG',trial_det.T,hamil_MF.two_body_e)
-    ALPHA_O = contract('ip,prG->irG',trial_det.T,hamil_MF.two_body_o)
-    ALPHA_E_s = ALPHA_E.astype(np.complex64)
-    ALPHA_O_s = ALPHA_O.astype(np.complex64)
-    ALPHA = np.concatenate((ALPHA_E_s, ALPHA_O_s), axis=-1)
-    expr_fb = contract_expression('Nri,irG->NG',(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),ALPHA,constants=[1],optimize='greedy')
-    two_body = np.concatenate((hamil_MF.two_body_e,hamil_MF.two_body_o), axis=-1).astype(np.complex64)
-    expr_h2 = contract_expression('ijG,GN->ijN',two_body,(2*config.num_g,config.num_walkers),constants=[0],optimize='greedy')
-
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
-    new_walkers = propagate_walkers(config, trial_det, walkers, hamiltonian, x_Q, expr_fb, expr_h2)
+    new_walkers = propagate_walkers(config, trial_det, walkers, hamiltonian, x_Q)
     check_det = np.allclose(new_walkers.slater_det, expected_slater_det, atol=1e-7)
     check_weight = np.allclose(new_walkers.weights, expected_weights)
     print("propagation", check_det, check_weight)
@@ -291,12 +269,26 @@ class Hamiltonian:
         self._singularity_correction = (
             config.num_electron * config.num_kpoint * config.singularity
         )
-        h_mf = self.compute_mean_field(config, trial_det)
+
+        ql = []
+        for i in range(1,config.num_kpoint+1):
+            for j in range(1,config.num_kpoint+1):
+                for k in range(1,config.num_kpoint+1):
+                    if abs(i-j)==k-1:
+                        ql.append([i,j,k])
+        ql = np.array(ql)
+
+        h_mf = self.compute_mean_field_one_body(config, trial_det, ql)
         h_sic = -contract('ijG, kjG -> ik', self.two_body, self.two_body.conj()) / 2
         h1 = self.one_body + h_mf + h_sic
-        self._h1 = h1
+        self._h1 = -h1 * config.timestep
         self._exp_h1 = expm(-h1 * config.timestep)
         self._exp_h1_half = expm(-0.5 * h1 * config.timestep)
+
+        two_body = self.compute_mean_field_two_body(config, trial_det, ql)
+        alpha = contract("pi, prg -> irg", trial_det, two_body)
+        self.expr_fb = contract_expression('Nri,irG->NG',(config.num_walkers,config.num_orbital*config.num_kpoint,config.num_electron*config.num_kpoint),alpha,constants=[1],optimize='greedy')
+        self.expr_h2 = contract_expression('ijG,GN->ijN',two_body,(2*config.num_g,config.num_walkers),constants=[0],optimize='greedy')
 
     def compute_one_body(self, theta):
         return 2 * self._one_body_expression(theta)
@@ -307,18 +299,20 @@ class Hamiltonian:
     def compute_exchange(self, theta):
         return -self._exchange_expression(theta, theta) - self._singularity_correction
 
-    def compute_mean_field(self, config, trial_det):
+    def compute_mean_field_one_body(self, config, trial_det, ql):
         # interface to legacy code
         h2_t = np.einsum('prG->rpG', self.two_body.conj())
-        ql = []
-        for i in range(1,config.num_kpoint+1):
-            for j in range(1,config.num_kpoint+1):
-                for k in range(1,config.num_kpoint+1):
-                    if abs(i-j)==k-1:
-                        ql.append([i,j,k])
-        ql = np.array(ql)
         h1_legacy = H_1_mf(trial_det,trial_det,self.two_body,h2_t,ql,self.one_body,config.num_kpoint,config.num_orbital,config.num_electron)
-        return config.backend.array(h1_legacy - self.one_body, dtype=config.complex_type)
+        result = h1_legacy - self.one_body
+        return config.backend.array(result, dtype=config.complex_type)
+
+    def compute_mean_field_two_body(self, config, trial_det, ql):
+        # interface to legacy code
+        h2_af_MF_sub = A_af_MF_sub(trial_det,trial_det,self.two_body,ql,config.num_kpoint,config.num_orbital,config.num_electron)
+        two_body_e = gen_A_e_full(h2_af_MF_sub)
+        two_body_o = gen_A_o_full(h2_af_MF_sub)
+        result = np.concatenate((two_body_e, two_body_o), axis=-1)
+        return config.backend.array(result, dtype=config.complex_type)
 
     @property
     def exp_h0(self):
@@ -379,15 +373,15 @@ def measure_energy(config, trial, walkers, hamiltonian):
     return weighted_energy_global / sum_weights_global
 
 
-def propagate_walkers(config, trial, walkers, hamiltonian, x_Q,expr_fb,expr_h2):
+def propagate_walkers(config, trial, walkers, hamiltonian, x_Q):
     new_walkers = Walkers(np.zeros_like(walkers.slater_det), np.zeros_like(walkers.weights))
     theta = biorthogonalize(config.backend, trial, walkers.slater_det)
     sqrt_tau = np.sqrt(config.timestep)
-    fb_Q = -2j*sqrt_tau*expr_fb(theta)
+    fb_Q = -2j*sqrt_tau*hamiltonian.expr_fb(theta)
     ####Boundary condition for rare events  based on: https://doi.org/10.1103/PhysRevB.80.214116
     fb_Q[abs(fb_Q)>1] = 1.0
 
-    h_2 = sqrt_tau * 1j * expr_h2(x_Q - fb_Q.T)
+    h_2 = sqrt_tau * 1j * hamiltonian.expr_h2(x_Q - fb_Q.T)
     print('h_2 type', h_2.dtype)
 
     if config.propagator == "Taylor":
