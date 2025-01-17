@@ -175,7 +175,7 @@ def main(precision, backend):
     x_o_Q = np.random.randn(config.num_g, config.num_walkers)
     x_e_Qs = x_e_Q.astype(np.single)
     x_o_Qs = x_o_Q.astype(np.single)
-    hamiltonian.x_Q = np.concatenate((x_e_Qs, x_o_Qs), axis=0)
+    hamiltonian.test_random_field = np.concatenate((x_e_Qs, x_o_Qs), axis=0)
 
     expected_slater_det = np.load("slater_det.npy")
     expected_weights = np.load("weights.npy")
@@ -245,6 +245,7 @@ class Hamiltonian:
     two_body: np.typing.ArrayLike
     # two-body part of Hamiltonian after factorization,
     # expected shape (num_orbital, num_orbital * num_kpoint, num_g * num_kpoint)
+    test_random_field: np.typing.ArrayLike = None  # a random field used for testing
 
     def setup_energy_expressions(self, config, trial_det):
         shape_theta = (
@@ -312,8 +313,8 @@ class Hamiltonian:
     def compute_exchange(self, theta):
         return -self._exchange_expression(theta, theta) - self._singularity_correction
 
-    def create_auxiliary_field(self, theta):
-        random_field = self.create_random_field()
+    def create_auxiliary_field(self, config, theta):
+        random_field = self.create_random_field(config)
         force_bias = -2j * self._sqrt_tau * self.expr_fb(theta)
         # Boundary condition for rare events based on: https://doi.org/10.1103/PhysRevB.80.214116
         force_bias[abs(force_bias) > 1] = 1.0
@@ -321,8 +322,8 @@ class Hamiltonian:
         field = 1j * self._sqrt_tau * self.expr_h2(random_field - force_bias)
         return field, np.exp(arg)
 
-    def create_random_field(self):
-        return self.x_Q
+    def create_random_field(self, config):
+        return self.test_random_field
 
     def compute_mean_field_one_body(self, config, trial_det, ql):
         # interface to legacy code
@@ -401,7 +402,7 @@ def measure_energy(config, trial, walkers, hamiltonian):
 def propagate_walkers(config, trial, walkers, hamiltonian):
     new_walkers = Walkers(np.zeros_like(walkers.slater_det), np.zeros_like(walkers.weights))
     theta = biorthogonalize(config.backend, trial, walkers.slater_det)
-    h2, importance = hamiltonian.create_auxiliary_field(theta)
+    h2, importance = hamiltonian.create_auxiliary_field(config, theta)
     print('h_2 type', h2.dtype)
 
     if config.propagator == "Taylor":
