@@ -137,16 +137,14 @@ def gen_A_o_full(h2):
     return a_o
 
 
-
-
 def main(precision, backend):
     print()
+    max_seed = np.iinfo(np.int32).max
+    seed = np.random.randint(max_seed)
     if backend == "numpy":
-        backend = np
-        backend.block_diag = scipy.linalg.block_diag
+        backend = NumpyBackend(seed)
     elif backend == "jax":
-        backend = jnp
-        backend.block_diag = jax.scipy.linalg.block_diag
+        backend = JaxBackend(seed)
     else:
         raise NotImplementedError(f"Selected {backend=} not implemented!")
     config = Configuration(
@@ -193,6 +191,34 @@ def main(precision, backend):
     E = measure_energy(config, trial_det, walkers, hamiltonian)
     expected = 631.8965 - 0.009482565j
     print(E, np.isclose(E, expected))
+
+
+class Backend:
+    def __init__(self, module):
+        self._module = module
+
+    def __getattr__(self, name):
+        return getattr(self._module, name)
+
+class JaxBackend(Backend):
+    def __init__(self, seed):
+        super().__init__(jnp)
+        self.block_diag = jax.scipy.linalg.block_diag
+        self._key = jax.random.key(seed)
+
+    def random_normal(self, shape, dtype):
+        self._key, subkey = jax.random.split(self._key)
+        return jax.random.normal(subkey, shape, dtype)
+
+
+class NumpyBackend(Backend):
+    def __init__(self, seed):
+        super().__init__(np)
+        self.block_diag = scipy.linalg.block_diag
+        self._generator = np.random.default_rng(seed)
+
+    def random_normal(self, shape, dtype):
+        return self._generator.standard_normal(shape, dtype)
 
 
 @dataclass
@@ -323,7 +349,11 @@ class Hamiltonian:
         return field, np.exp(arg)
 
     def create_random_field(self, config):
-        return self.test_random_field
+        if self.test_random_field is None:
+            shape = (2 * config.num_g, config.num_walkers)
+            return config.backend.random_normal(shape, config.float_type)
+        else:
+            return self.test_random_field
 
     def compute_mean_field_one_body(self, config, trial_det, ql):
         # interface to legacy code
