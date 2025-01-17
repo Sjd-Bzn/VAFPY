@@ -315,14 +315,14 @@ class Hamiltonian:
         two_body = self.compute_mean_field_two_body(config, trial_det, ql)
         alpha = contract("pi, prg -> irg", trial_det, two_body)
         self._sqrt_tau = config.backend.sqrt(config.timestep).astype(config.float_type)
-        self.expr_fb = contract_expression(
+        self._force_bias_expression = contract_expression(
             'wri, irg -> gw',
             (config.num_walkers, config.num_orbital * config.num_kpoint, config.num_electron * config.num_kpoint),
             alpha,
             constants=[1],
             optimize='greedy'
         )
-        self.expr_h2 = contract_expression(
+        self._auxiliary_field = contract_expression(
             'ijg, gw -> ijw',
             two_body,
             (2 * config.num_g, config.num_walkers),
@@ -341,11 +341,11 @@ class Hamiltonian:
 
     def create_auxiliary_field(self, config, theta):
         random_field = self.create_random_field(config)
-        force_bias = -2j * self._sqrt_tau * self.expr_fb(theta)
+        force_bias = -2j * self._sqrt_tau * self._force_bias_expression(theta)
         # Boundary condition for rare events based on: https://doi.org/10.1103/PhysRevB.80.214116
         force_bias[abs(force_bias) > 1] = 1.0
         arg = contract("gw, gw -> w", random_field - 0.5 * force_bias, force_bias)
-        field = 1j * self._sqrt_tau * self.expr_h2(random_field - force_bias)
+        field = 1j * self._sqrt_tau * self._auxiliary_field(random_field - force_bias)
         return field, np.exp(arg)
 
     def create_random_field(self, config):
