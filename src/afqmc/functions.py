@@ -180,17 +180,21 @@ def main(precision, backend):
     new_walkers = propagate_walkers(config, trial_det, walkers, hamiltonian)
     check_det = np.allclose(new_walkers.slater_det, expected_slater_det, atol=1e-7)
     check_weight = np.allclose(new_walkers.weights, expected_weights)
-    print("propagation", check_det, check_weight)
+    print("propagate_walkers", check_det, check_weight)
+    print(new_walkers.slater_det.dtype, new_walkers.slater_det.__class__)
+    print(new_walkers.weights.dtype, new_walkers.weights.__class__)
 
-    E = measure_energy(config, trial_det, walkers, hamiltonian)
-    print(E.dtype, E.__class__)
+    E_hf = measure_energy(config, trial_det, walkers, hamiltonian)
     expected = 631.88947 - 2.8974954e-09j
-    print(E, np.isclose(E, expected))
+    check_hf = np.isclose(E_hf, expected)
     np.random.seed(1887431)
     walkers.slater_det += 0.05 * np.random.rand(*walkers.slater_det.shape)
-    E = measure_energy(config, trial_det, walkers, hamiltonian)
+    E_random = measure_energy(config, trial_det, walkers, hamiltonian)
     expected = 631.8965 - 0.009482565j
-    print(E, np.isclose(E, expected))
+    check_random = np.isclose(E_random, expected)
+    print("measure_energy", check_hf, check_random)
+    print(E_hf, E_hf.dtype, E_hf.__class__)
+    print(E_random, E_random.dtype, E_random.__class__)
 
 
 class Backend:
@@ -343,7 +347,7 @@ class Hamiltonian:
         random_field = self.create_random_field(config)
         force_bias = -2j * self._sqrt_tau * self._force_bias_expression(theta)
         # Boundary condition for rare events based on: https://doi.org/10.1103/PhysRevB.80.214116
-        force_bias[abs(force_bias) > 1] = 1.0
+        force_bias = config.backend.where(abs(force_bias) > 1, 1.0, force_bias)
         arg = contract("gw, gw -> w", random_field - 0.5 * force_bias, force_bias)
         field = 1j * self._sqrt_tau * self._auxiliary_field(random_field - force_bias)
         return field, np.exp(arg)
@@ -433,7 +437,7 @@ def propagate_walkers(config, trial, walkers, hamiltonian):
     new_walkers = Walkers(np.zeros_like(walkers.slater_det), np.zeros_like(walkers.weights))
     theta = biorthogonalize(config.backend, trial, walkers.slater_det)
     h2, importance = hamiltonian.create_auxiliary_field(config, theta)
-    print('h_2 type', h2.dtype)
+    print('h_2 type', h2.dtype, h2.__class__)
 
     if config.propagator == "Taylor":
         h = hamiltonian.h1 + h2
@@ -484,5 +488,5 @@ def project_trial(backend, trial, slater_det):
 if __name__ == "__main__":
     main("single", "numpy")
     main("double", "numpy")
-    # main("single", "jax")
-    # main("double", "jax")
+    main("single", "jax")
+    main("double", "jax")
