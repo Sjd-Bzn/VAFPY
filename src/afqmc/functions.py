@@ -188,7 +188,8 @@ def main(precision, backend):
     expected = 631.88947 - 2.8974954e-09j
     check_hf = np.isclose(E_hf, expected)
     np.random.seed(1887431)
-    walkers.slater_det += 0.05 * np.random.rand(*walkers.slater_det.shape)
+    random_change = config.backend.array(np.random.rand(*walkers.slater_det.shape))
+    walkers.slater_det += 0.05 * random_change.astype(config.complex_type)
     E_random = measure_energy(config, trial_det, walkers, hamiltonian)
     expected = 631.8965 - 0.009482565j
     check_random = np.isclose(E_random, expected)
