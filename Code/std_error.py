@@ -59,7 +59,8 @@ def main():
     # 1) Load data from a file with 4 columns
     #    (Replace 'my_data.txt' with your actual filename)
     # --------------------------------------------------
-    filenames = ["numpy_double.txt","numpy_single.txt","numpy_single_1.txt","numpy_single_2.txt","jax_double.txt","jax_single.txt","jax_single_1.txt","jax_single_2.txt","jax_single_3.txt"]
+    #filenames = ["numpy_double.txt","numpy_single.txt","numpy_single_1.txt","numpy_single_2.txt","jax_double.txt","jax_single.txt","jax_single_1.txt","jax_single_2.txt","jax_single_3.txt","jax_single_4.txt"]
+    filenames = ["AFQMC_CS_num_k1_samp_freq_1_Reortho_1_Rebal_20_TAU_0.0005_walkers_156.txt"]
     for filename in filenames:
         data_all = np.loadtxt(filename)  # shape: (num_rows, 4)
 
@@ -68,17 +69,18 @@ def main():
          # --------------------------------------------------
         column_index = 1  # 0-based; 1 means "2nd column"
         data_full = data_all[:, column_index]
-
+        time_index = 0
+        time_full = data_all[:, time_index]
      # --------------------------------------------------
      # 3) Discard first 25% as burn-in
      # --------------------------------------------------
         st = int(0.25 * len(data_full))
         data = data_full[st:]
-
+        time = time_full[st:]
      # --------------------------------------------------
      # 4) Perform block averaging
      # --------------------------------------------------
-        block_sizes, varBM, se = block_average(data, max_block_size=40)
+        block_sizes, varBM, se = block_average(data, max_block_size=1000)
 
      # --------------------------------------------------
      # 5) Compare with naive standard error
@@ -90,7 +92,7 @@ def main():
      # --------------------------------------------------
      # 6) Plot results
      # --------------------------------------------------
-        plt.figure(figsize=(10,5))
+        plt.figure(figsize=(20,10))
 
      # (a) Plot sqrt(var_of_block_means) = std of block means
         plt.subplot(1,2,1)
@@ -109,6 +111,13 @@ def main():
         plt.ylabel('Std Error of the Mean')
         plt.title('Standard Error vs. Block Size')
         plt.legend()
+        
+        # (c) Data vs tau
+        plt.subplot(2,2,1)
+        plt.plot(time, data, 'o-', label='Raw Data')
+        plt.xlabel('Time')
+        plt.ylabel('Raw Energy in each Step')
+        plt.legend()
         pdf_filename = os.path.splitext(filename)[0] + "_plot.pdf"
         plt.savefig(pdf_filename, format='pdf', bbox_inches='tight')
         plt.tight_layout()
@@ -118,6 +127,7 @@ def main():
          # 7) Choose final error estimate from largest block size
          #    or from a plateau region. Here we pick the largest.
          # --------------------------------------------------
+        system_name = os.path.splitext(filename)[0]
         final_idx = -1  # use the last element in 'se'
         final_bsize = block_sizes[final_idx]
         final_err   = se[final_idx]
@@ -126,13 +136,14 @@ def main():
          # --------------------------------------------------
          # 8) Print final results
          # --------------------------------------------------
+        
+        print(f"System = {system_name}")
         print(f"Data column used = {column_index+1}")
         print(f"Production data length = {N_prod}")
         print(f"Final chosen block size = {final_bsize}")
         print(f"Mean value     = {mean_val:.6f}")
         print(f"Std. Error     = {final_err:.6f}")
         print(f"Naive SE       = {naive_se:.6f}")
-
 
 if __name__ == '__main__':
     main()
