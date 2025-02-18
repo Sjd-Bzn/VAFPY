@@ -48,6 +48,7 @@ def _setup_L(shape_L, L_zero):
     # the case. However, I did not find a way to initialize it with a value that leads
     # to consistent results in the propagation. So please be careful to make sure the
     # odd part is properly included.
+    # Perhaps, we need to construct L such that L @ L* = L* @ L for all g?
     if L_zero:
         return np.zeros(shape_L, dtype=np.complex128)
     L = np.random.random(shape_L) + 1j * np.random.random(shape_L)

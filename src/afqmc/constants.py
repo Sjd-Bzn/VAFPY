@@ -141,7 +141,7 @@ class Constants:
     def _setup_H1_full(self, L_full):
         # TODO: implement k-point version
         if self.number_k == 1:
-            SIC = 0.5 *contract("nmg,mlg->nl", L_full, L_full)
+            SIC = 0.5 * contract("nmg,mlg->nl", L_full, L_full)
         else:
             SIC = 0
         return self.H1 - SIC
