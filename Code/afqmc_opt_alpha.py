@@ -4,7 +4,7 @@ if MPI.COMM_WORLD.Get_rank() != 0:
 
 import numpy as np
 from dataclasses import dataclass
-from afqmc_ref_INPUT import *
+from afqmc_opt_INPUT import *
 from opt_einsum import contract_expression
 from opt_einsum import contract
 from time import time

@@ -3,23 +3,23 @@ import numpy as np
 from time import time
 from dataclasses import dataclass
 from cmath import phase
-from afqmc_ref_INPUT import *
+from afqmc_opt_INPUT import *
 from opt_einsum import contract
 from opt_einsum import contract_expression
 from scipy.linalg import expm
 import hashlib
 #from afqmc_alpha import expr_exch_3
 #from afqmc_alpha import expr_hart
-from afqmc_ref_alpha import expr_h2_e
-from afqmc_ref_alpha import expr_h2_o
+from afqmc_opt_alpha import expr_h2_e
+from afqmc_opt_alpha import expr_h2_o
 #from afqmc_alpha import ALPHA_E
 #from afqmc_alpha import ALPHA_O
 #from afqmc_alpha import expr_exch_new
 #from afqmc_alpha import expr_hart_new
-from afqmc_ref_alpha import expr_hart_new_new
-from afqmc_ref_alpha import expr_exch_new_new
-from afqmc_ref_alpha import expr_fb_e
-from afqmc_ref_alpha import expr_fb_o
+from afqmc_opt_alpha import expr_hart_new_new
+from afqmc_opt_alpha import expr_exch_new_new
+from afqmc_opt_alpha import expr_fb_e
+from afqmc_opt_alpha import expr_fb_o
 
 @dataclass
 class HAMILTONIAN:
@@ -437,254 +437,263 @@ def swap(a):
 #        )
 #
 #    return new_walker_mat, new_walker_weight
-import numpy as np
 
-def update_hyb(
-    trial_0, trial, walker_mat, walker_weight, q_list,
-    h_0, h_1, d_tau, e_0_exp, h1_exp_half, propagator
-):
-    """
-    Partially vectorized AFQMC walker update.
-    
-    - Vectorizes force bias and exponent factor calculations.
-    - Uses a loop only for applying the propagator matrix.
-    """
-
-    # Number of orbitals / spin channels for the random field
-    NG = num_g          # define or pass this in
-    NW = walker_mat.shape[0]  # Number of walkers
-
-    # Preallocate outputs
-    new_walker_mat = np.zeros_like(walker_mat)
-    new_walker_weight = np.zeros_like(walker_weight)
-
-    # -------------------------------------------------
-    # 1) Compute theta(trial, walker) for all walkers
-    #    (Typically shape could be (NW, something...))
-    # -------------------------------------------------
-    theta_mat = np.array([theta(trial, w) for w in walker_mat])
-    
-    # -------------------------------------------------
-    # 2) Compute force bias (fb_e_Q, fb_o_Q) in vector form
-    # -------------------------------------------------
-    fb_e_Q = -2j * SQRT_DTAU * expr_fb_e(theta_mat)  # shape: (NW, NG) or (NW, ...)
-    fb_o_Q = -2j * SQRT_DTAU * expr_fb_o(theta_mat)
-
-    # -------------------------------------------------
-    # 3) Enforce boundary conditions on fb
-    #    (clip to [-1, 1], or whichever rule you prefer)
-    # -------------------------------------------------
-#    fb_e_Q = np.clip(fb_e_Q, -1, 1)
-#    fb_o_Q = np.clip(fb_o_Q, -1, 1)
-    fb_e_Q[abs(fb_e_Q)>1] = 1.0
-    fb_o_Q[abs(fb_o_Q)>1] = 1.0
-    # -------------------------------------------------
-    # 4) Generate random fields for all walkers in one shot
-    #    We'll assume shapes:
-    #      x_e_Q -> (NG, NW)
-    #      fb_e_Q -> (NW, NG)
-    #    so keep that in mind when we do subtractions, etc.
-    # -------------------------------------------------
-    x_e_Q = np.random.randn(NG, NW)
-    x_o_Q = np.random.randn(NG, NW)
-
-    # -------------------------------------------------
-    # 5) Build the two-body piece h2 (if that is how your code works)
-    #    This often yields a "stack" of matrices, shape e.g. (M, M, NW).
-    # -------------------------------------------------
-    # Note: x_e_Q - fb_e_Q.T will have shape (NG, NW).
-    #       expr_h2_e(...) or expr_h2_o(...) typically yield (M, M, NW).
-    h_2 = expr_h2_e(x_e_Q - fb_e_Q.T) + expr_h2_o(x_o_Q - fb_o_Q.T)
-
-    # -------------------------------------------------
-    # 6) Precompute old overlaps (optional), so we can do
-    #    ratio = new_overlap / old_overlap
-    # -------------------------------------------------
-    # If you want determinant^2 overlap, do:
-    old_overlaps = np.array([
-        np.linalg.det(overlap(trial, w))**2 for w in walker_mat
-    ])
-    
-    # -------------------------------------------------
-    # 7) Apply the propagator in a loop, because each walker
-    #    needs a distinct matrix exponent or truncated series
-    # -------------------------------------------------
-    for i in range(NW):
-        # Construct the one-body part plus the two-body fluctuation
-        #if propagator in ['Old', 'Taylor', 'S1', 'S2']:
-            # Example: h = h_1 + (i-j?) but typically
-            # you have something like:
-            #h = h_1 + SQRT_DTAU * (1j) * h_2[:, :, i]
-        #else:
-        #    raise ValueError("Invalid propagator method.")
-
-        # Then apply whichever scheme:
-        if propagator == 'Old':
-            # truncated series:
-            addend = walker_mat[i]
-            accum = np.zeros_like(addend)
-            for j in range(order_trunc + 1):
-                accum += addend
-                addend = (h @ addend) / (j + 1)
-            new_walker_mat[i] = accum
-
-        elif propagator == 'Taylor':
-            prop_taylor = (
-                np.exp(d_tau * (-h_0 + e_0_exp)) * exp_Taylor(h)
-            )
-            new_walker_mat[i] = prop_taylor @ walker_mat[i]
-
-        elif propagator == 'S1':
-            prop_S1 = (
-                np.exp(d_tau * (-h_0 + e_0_exp))
-                * expm(-d_tau * h_1)
-                * exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i])
-            )
-            new_walker_mat[i] = prop_S1 @ walker_mat[i]
-
-        elif propagator == 'S2':
-            prop_S2 = (
-                e_0_exp
-                * h1_exp_half
-                @ exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i])
-                @ h1_exp_half
-            )
-            new_walker_mat[i] = prop_S2 @ walker_mat[i]
-
-    # -------------------------------------------------
-    # 8) Compute new overlaps and form overlap ratios
-    #    (vectorized: just do a list comprehension)
-    # -------------------------------------------------
-    new_overlaps = np.array([
-        np.linalg.det(overlap(trial, w_new))**2
-        for w_new in new_walker_mat
-    ])
-    overlap_ratios = new_overlaps / old_overlaps
-
-    # -------------------------------------------------
-    # 9) Compute the phase alpha (angle of overlap)
-    # -------------------------------------------------
-    alpha = np.angle(overlap_ratios)
-
-    # -------------------------------------------------
-    # 10) Vectorize the exponent factors for all walkers
-    #
-    #     We want, for each walker i:
-    #       exponent_e[i] = dot( x_e_Q[:,i], fb_e_Q[i,:] ) - 0.5 * sum( fb_e_Q[i,:]^2 )
-    #
-    #     so shape checks:
-    #       x_e_Q.shape   = (NG, NW)
-    #       fb_e_Q.shape  = (NW, NG)
-    # -------------------------------------------------
-    exponent_e = (
-        np.sum(x_e_Q * fb_e_Q.T, axis=0)
-        - 0.5 * np.sum(fb_e_Q**2, axis=1)
-    )
-    exponent_o = (
-        np.sum(x_o_Q * fb_o_Q.T, axis=0)
-        - 0.5 * np.sum(fb_o_Q**2, axis=1)
-    )
-
-    exp_factor_e = np.exp(exponent_e)
-    exp_factor_o = np.exp(exponent_o)
-
-    # -------------------------------------------------
-    # 11) Combine everything into new walker weights:
-    #     abs(overlap_ratio * exp_factor_e * exp_factor_o)
-    #     times cos(alpha) cutoff, times old weights
-    # -------------------------------------------------
-    # Carefully broadcast shapes or do elementwise multiplication:
-    new_walker_weight = (
-        np.abs(overlap_ratios * exp_factor_e * exp_factor_o)
-        * np.maximum(0, np.cos(alpha))
-        * walker_weight
-    )
-
-    return new_walker_mat, new_walker_weight
-
-#def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,h_0,h_1,d_tau,e_0_exp,h1_exp_half,propagator):
-#    NG = num_g
+#def update_hyb(
+#    trial_0, trial, walker_mat, walker_weight, q_list,
+#    h_0, h_1, d_tau, e_0_exp, h1_exp_half, propagator
+#):
+#    """
+#    Partially vectorized AFQMC walker update.
+#    
+#    - Vectorizes force bias and exponent factor calculations.
+#    - Uses a loop only for applying the propagator matrix.
+#    """
+#
+#    # Number of orbitals / spin channels for the random field
+#    NG = num_g          # define or pass this in
+#    NW = walker_mat.shape[0]  # Number of walkers
+#
+#    # Preallocate outputs
 #    new_walker_mat = np.zeros_like(walker_mat)
 #    new_walker_weight = np.zeros_like(walker_weight)
-#    theta_mat = []
-#    for i in range(NUM_WALKERS):
-#        theta_mat.append(theta(trial, walker_mat[i]))
-#    theta_mat=np.array(theta_mat)
-#    #print("Shape of theta_mat:", theta_mat.shape)
-# 
 #
-#    #fb_e_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, _e,optimize='greedy')
-#    #fb_o_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, alpha_full_o,optimize='greedy')
-#
-#    fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat) 
-#    fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat)
+#    # -------------------------------------------------
+#    # 1) Compute theta(trial, walker) for all walkers
+#    #    (Typically shape could be (NW, something...))
+#    # -------------------------------------------------
+#    theta_mat = np.array([theta(trial, w) for w in walker_mat])
 #    
-#    ####Boundary condition for rare events  based on:https://doi.org/10.1103/PhysRevB.80.214116
+#    # -------------------------------------------------
+#    # 2) Compute force bias (fb_e_Q, fb_o_Q) in vector form
+#    # -------------------------------------------------
+#    fb_e_Q = -2j * SQRT_DTAU * expr_fb_e(theta_mat)  # shape: (NW, NG) or (NW, ...)
+#    fb_o_Q = -2j * SQRT_DTAU * expr_fb_o(theta_mat)
 #
+#    # -------------------------------------------------
+#    # 3) Enforce boundary conditions on fb
+#    #    (clip to [-1, 1], or whichever rule you prefer)
+#    # -------------------------------------------------
+##    fb_e_Q = np.clip(fb_e_Q, -1, 1)
+##    fb_o_Q = np.clip(fb_o_Q, -1, 1)
 #    fb_e_Q[abs(fb_e_Q)>1] = 1.0
 #    fb_o_Q[abs(fb_o_Q)>1] = 1.0
+#    # -------------------------------------------------
+#    # 4) Generate random fields for all walkers in one shot
+#    #    We'll assume shapes:
+#    #      x_e_Q -> (NG, NW)
+#    #      fb_e_Q -> (NW, NG)
+#    #    so keep that in mind when we do subtractions, etc.
+#    # -------------------------------------------------
+#    x_e_Q = np.random.randn(NG, NW)
+#    x_o_Q = np.random.randn(NG, NW)
 #
-#   #####################################################################################################
-#    #x_e_Q = rng.random(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-#    #x_o_Q = rng.random(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-#    x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
-#    x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+#    # -------------------------------------------------
+#    # 5) Build the two-body piece h2 (if that is how your code works)
+#    #    This often yields a "stack" of matrices, shape e.g. (M, M, NW).
+#    # -------------------------------------------------
+#    # Note: x_e_Q - fb_e_Q.T will have shape (NG, NW).
+#    #       expr_h2_e(...) or expr_h2_o(...) typically yield (M, M, NW).
+#    h_2 = expr_h2_e(x_e_Q - fb_e_Q.T) + expr_h2_o(x_o_Q - fb_o_Q.T)
 #
-#
-###########################################################################################################################
-##    x_e_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(comm.Get_size(),NG,NUM_WALKERS)[comm.Get_rank()]
-##    x_o_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(comm.Get_size(),NG,NUM_WALKERS)[comm.Get_rank()]
-##    x_e_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(NG,NUM_WALKERS,comm.Get_size())[:,:,comm.Get_rank()]
-##    x_o_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(NG,NUM_WALKERS,comm.Get_size())[:,:,comm.Get_rank()]
-##    global first_call
-##    if first_call:
-##        first_call = False
-##    else:
-##        with open(f"size_{comm.Get_size()}_rank_{comm.Get_rank()}", "w") as f:
-##            for i in range(NUM_WALKERS):
-##                f.write(f"{comm.Get_size() * i + comm.Get_rank()} {x_e_Q[:,i]}\n")
-##        comm.barrier()
-##        exit()
-###############################################################################################################################   
-#    h_2 = expr_h2_e(x_e_Q-fb_e_Q.T)+expr_h2_o(x_o_Q-fb_o_Q.T)  
-#    #h_2 = h_mf.two_body_e@(x_e_Q-fb_e_Q.T) + h_mf.two_body_o@(x_o_Q-fb_o_Q.T)
+#    # -------------------------------------------------
+#    # 6) Precompute old overlaps (optional), so we can do
+#    #    ratio = new_overlap / old_overlap
+#    # -------------------------------------------------
+#    # If you want determinant^2 overlap, do:
+#    old_overlaps = np.array([
+#        np.linalg.det(overlap(trial, w))**2 for w in walker_mat
+#    ])
 #    
-#    for i in range(0,NUM_WALKERS):
-#        #h= h_1 + SQRT_DTAU * 1j *h_2 [:,:,i]
-#        if propagator == 'Old':
-#            addend = walker_mat[i]
-#            for j in range(order_trunc+1):
-#                new_walker_mat[i] += addend
-#                addend = h@addend/(j + 1)
+#    # -------------------------------------------------
+#    # 7) Apply the propagator in a loop, because each walker
+#    #    needs a distinct matrix exponent or truncated series
+#    # -------------------------------------------------
+#    for i in range(NW):
+#        # Construct the one-body part plus the two-body fluctuation
+#        #if propagator in ['Old', 'Taylor', 'S1', 'S2']:
+#            # Example: h = h_1 + (i-j?) but typically
+#            # you have something like:
+#            #h = h_1 + SQRT_DTAU * (1j) * h_2[:, :, i]
+#        #else:
+#        #    raise ValueError("Invalid propagator method.")
 #
-#        
-#########       Different propagators Taylor, S1, and S2
+#        # Then apply whichever scheme:
+#        if propagator == 'Old':
+#            # truncated series:
+#            addend = walker_mat[i]
+#            accum = np.zeros_like(addend)
+#            for j in range(order_trunc + 1):
+#                accum += addend
+#                addend = (h @ addend) / (j + 1)
+#            new_walker_mat[i] = accum
 #
 #        elif propagator == 'Taylor':
-#            prop_taylor = np.exp(d_tau * (-h_0 + e_0)) * exp_Taylor(h)
+#            prop_taylor = (
+#                np.exp(d_tau * (-h_0 + e_0_exp)) * exp_Taylor(h)
+#            )
 #            new_walker_mat[i] = prop_taylor @ walker_mat[i]
-#        
+#
 #        elif propagator == 'S1':
-#            
-#            prop_S1 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1) * exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i])
+#            prop_S1 = (
+#                np.exp(d_tau * (-h_0 + e_0_exp))
+#                * expm(-d_tau * h_1)
+#                * exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i])
+#            )
 #            new_walker_mat[i] = prop_S1 @ walker_mat[i]
-#        
+#
 #        elif propagator == 'S2':
-#            prop_S2 = e_0_exp * h1_exp_half@exp_Taylor(SQRT_DTAU*1j*h_2[:,:,i])@h1_exp_half
-#            #prop_S2 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1 / 2) @ exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i]) @ expm(-d_tau * h_1 / 2)
+#            prop_S2 = (
+#                e_0_exp
+#                * h1_exp_half
+#                @ exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i])
+#                @ h1_exp_half
+#            )
 #            new_walker_mat[i] = prop_S2 @ walker_mat[i]
-#        
-#        else:
-#            raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
 #
-#        ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i]))**2 / np.linalg.det(overlap(trial,walker_mat[i]))**2
-#        ##ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i])) / np.linalg.det(overlap(trial,walker_mat[i]))
-#        alpha = phase(ovrlap_ratio)
+#    # -------------------------------------------------
+#    # 8) Compute new overlaps and form overlap ratios
+#    #    (vectorized: just do a list comprehension)
+#    # -------------------------------------------------
+#    new_overlaps = np.array([
+#        np.linalg.det(overlap(trial, w_new))**2
+#        for w_new in new_walker_mat
+#    ])
+#    overlap_ratios = new_overlaps / old_overlaps
 #
-#####new_weight
+#    # -------------------------------------------------
+#    # 9) Compute the phase alpha (angle of overlap)
+#    # -------------------------------------------------
+#    alpha = np.angle(overlap_ratios)
 #
-#        new_walker_weight[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_e_Q[:,i],fb_e_Q[i])-np.dot(fb_e_Q[i],fb_e_Q[i]/2))*np.exp(np.dot(x_o_Q[:,i], fb_o_Q[i])-np.dot(fb_o_Q[i],fb_o_Q[i]/2))))* max(0,np.cos(alpha))*walker_weight[i]
+#    # -------------------------------------------------
+#    # 10) Vectorize the exponent factors for all walkers
+#    #
+#    #     We want, for each walker i:
+#    #       exponent_e[i] = dot( x_e_Q[:,i], fb_e_Q[i,:] ) - 0.5 * sum( fb_e_Q[i,:]^2 )
+#    #
+#    #     so shape checks:
+#    #       x_e_Q.shape   = (NG, NW)
+#    #       fb_e_Q.shape  = (NW, NG)
+#    # -------------------------------------------------
+#    exponent_e = (
+#        np.sum(x_e_Q * fb_e_Q.T, axis=0)
+#        - 0.5 * np.sum(fb_e_Q**2, axis=1)
+#    )
+#    exponent_o = (
+#        np.sum(x_o_Q * fb_o_Q.T, axis=0)
+#        - 0.5 * np.sum(fb_o_Q**2, axis=1)
+#    )
+#
+#    exp_factor_e = np.exp(exponent_e)
+#    exp_factor_o = np.exp(exponent_o)
+#
+#    # -------------------------------------------------
+#    # 11) Combine everything into new walker weights:
+#    #     abs(overlap_ratio * exp_factor_e * exp_factor_o)
+#    #     times cos(alpha) cutoff, times old weights
+#    # -------------------------------------------------
+#    # Carefully broadcast shapes or do elementwise multiplication:
+#    new_walker_weight = (
+#        np.abs(overlap_ratios * exp_factor_e * exp_factor_o)
+#        * np.maximum(0, np.cos(alpha))
+#        * walker_weight
+#    )
+#
 #    return new_walker_mat, new_walker_weight
+
+def update_hyb(trial_0,trial,walker_mat,walker_weight,q_list,expr_zero,h_1,d_tau,exp_e_0,h1_exp_half,propagator):
+    NG = num_g
+    new_walker_mat = np.zeros_like(walker_mat)
+    new_walker_weight = np.zeros_like(walker_weight)
+    theta_mat = []
+    for i in range(NUM_WALKERS):
+        theta_mat.append(theta(trial, walker_mat[i]))
+    theta_mat=np.array(theta_mat)
+    #print("Shape of theta_mat:", theta_mat.shape)
+ 
+
+    #fb_e_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, _e,optimize='greedy')
+    #fb_o_Q = -2j*SQRT_DTAU*contract('Nri,irG->NG',theta_mat, alpha_full_o,optimize='greedy')
+
+    fb_e_Q = -2j*SQRT_DTAU*expr_fb_e(theta_mat) 
+    fb_o_Q = -2j*SQRT_DTAU*expr_fb_o(theta_mat)
+    
+    ####Boundary condition for rare events  based on:https://doi.org/10.1103/PhysRevB.80.214116
+
+    fb_e_Q[abs(fb_e_Q)>1] = 1.0
+    fb_o_Q[abs(fb_o_Q)>1] = 1.0
+
+   #####################################################################################################
+    #x_e_Q = rng.random(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+    #x_o_Q = rng.random(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+    x_e_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+    x_o_Q = np.random.randn(NG*NUM_WALKERS).reshape(NG,NUM_WALKERS)
+
+
+##########################################################################################################################
+#    x_e_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(comm.Get_size(),NG,NUM_WALKERS)[comm.Get_rank()]
+#    x_o_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(comm.Get_size(),NG,NUM_WALKERS)[comm.Get_rank()]
+#    x_e_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(NG,NUM_WALKERS,comm.Get_size())[:,:,comm.Get_rank()]
+#    x_o_Q = np.random.randn(NG*NUM_WALKERS*comm.Get_size()).reshape(NG,NUM_WALKERS,comm.Get_size())[:,:,comm.Get_rank()]
+#    global first_call
+#    if first_call:
+#        first_call = False
+#    else:
+#        with open(f"size_{comm.Get_size()}_rank_{comm.Get_rank()}", "w") as f:
+#            for i in range(NUM_WALKERS):
+#                f.write(f"{comm.Get_size() * i + comm.Get_rank()} {x_e_Q[:,i]}\n")
+#        comm.barrier()
+#        exit()
+##############################################################################################################################   
+    h_2 = expr_h2_e(x_e_Q-fb_e_Q.T)+expr_h2_o(x_o_Q-fb_o_Q.T)  
+    #h_2 = h_mf.two_body_e@(x_e_Q-fb_e_Q.T) + h_mf.two_body_o@(x_o_Q-fb_o_Q.T)
+    
+    for i in range(0,NUM_WALKERS):
+        #h= h_1 + SQRT_DTAU * 1j *h_2 [:,:,i]
+        if propagator == 'Old':
+            addend = walker_mat[i]
+            for j in range(order_trunc+1):
+                new_walker_mat[i] += addend
+                addend = h@addend/(j + 1)
+
+        
+########       Different propagators Taylor, S1, and S2
+
+        elif propagator == 'Taylor':
+            prop_taylor = np.exp(d_tau * (-h_0 + e_0)) * exp_Taylor(h)
+            new_walker_mat[i] = prop_taylor @ walker_mat[i]
+        
+        elif propagator == 'S1':
+            
+            prop_S1 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1) * exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i])
+            new_walker_mat[i] = prop_S1 @ walker_mat[i]
+        
+        elif propagator == 'S2':
+            prop_S2 = expr_zero * h1_exp_half@exp_Taylor(SQRT_DTAU*1j*h_2[:,:,i])@h1_exp_half
+            #prop_S2 = np.exp(d_tau * (-h_0 + e_0)) * expm(-d_tau * h_1 / 2) @ exp_Taylor(SQRT_DTAU * 1j * h_2[:, :, i]) @ expm(-d_tau * h_1 / 2)
+            new_walker_mat[i] = prop_S2 @ walker_mat[i]
+        
+        else:
+            raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
+
+        ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i]))**2 / np.linalg.det(overlap(trial,walker_mat[i]))**2
+        ##ovrlap_ratio = np.linalg.det(overlap(trial,new_walker_mat[i])) / np.linalg.det(overlap(trial,walker_mat[i]))
+        alpha = phase(ovrlap_ratio)
+
+####new_weight
+        reweighting = (ovrlap_ratio*((np.exp( np.dot(x_e_Q[:,i],fb_e_Q[i])-np.dot(fb_e_Q[i],fb_e_Q[i]/2))*np.exp(np.dot(x_o_Q[:,i], fb_o_Q[i])-np.dot(fb_o_Q[i],fb_o_Q[i]/2))))*exp_e_0)
+    #    print('reweighting shape', reweighting)
+
+     #   print('e_0 shape', e_0)
+        if exp_e_0 != 0:
+            if reweighting.real < 10: reweighting = reweighting
+            else: reweighting = 0
+
+####new_weight
+
+        #new_walker_weight[i] = abs(reweighting)* max(0,np.cos(alpha))*walker_weight[i]
+        new_walker_weight[i] = abs(ovrlap_ratio*(np.exp( np.dot(x_e_Q[:,i],fb_e_Q[i])-np.dot(fb_e_Q[i],fb_e_Q[i]/2))*np.exp(np.dot(x_o_Q[:,i], fb_o_Q[i])-np.dot(fb_o_Q[i],fb_o_Q[i]/2))))* max(0,np.cos(alpha))*walker_weight[i]
+    return new_walker_mat, new_walker_weight
 
 
 def propagator_fp(h_mf,h_1,d_tau,e_0):
@@ -772,7 +781,7 @@ def Exchange(trial,weights,walkers):#,alpha_full,alpha_full_t):#,comm):
     for i in range(NUM_WALKERS):
         thetas.append(theta(trial, walkers[i]))
     thetas=np.array(thetas)
-    exch_list =(-expr_exch_new_new(thetas,thetas) - num_electrons_up*num_k*fsg)/num_k
+    exch_list =(-expr_exch_new_new(thetas,thetas)- num_electrons_up*num_k*fsg)/num_k
     val=0
     for exchange, weight in zip(exch_list, weights):
         val+=exchange*weight/comm.Get_size()
@@ -798,7 +807,7 @@ def measure_E_gs(trial,weights,walkers,h_1,e_0):#,alpha_full,alpha_full_t):#,com
     b=np.dot(trial.T,h_1)
     e1=2*contract('iNi->N',np.tensordot(b, thetas,axes=((1,1)))) / num_k
     har_list  = 2* expr_hart_new_new(thetas,thetas) / num_k
-    exch_list = (-expr_exch_new_new(thetas,thetas) - num_electrons_up * num_k *fsg)/num_k
+    exch_list = (-expr_exch_new_new(thetas,thetas)- num_electrons_up * num_k *fsg)/num_k
     e_locs=e1+har_list+exch_list
 
 

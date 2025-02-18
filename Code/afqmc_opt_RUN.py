@@ -2,9 +2,9 @@ from mpi4py import MPI
 if MPI.COMM_WORLD.Get_rank() != 0:
     print = lambda *arg, **kwargs: None
 
-from afqmc_ref_funcs import *
-from afqmc_ref_alpha import H1_self_half_exp
-from afqmc_ref_alpha import H_zero
+from afqmc_opt_func import *
+from afqmc_opt_alpha import H1_self_half_exp
+from afqmc_opt_alpha import H_zero
 #first_cpu = comm.Get_rank()==0
 from time import time
 import sys
@@ -233,8 +233,8 @@ exchange = Exchange(PSI_T_up,walkers.weights,walkers.mats_up)
 E1_vasp = EBANDS - 2 * hartree - 2* exchange
 b=a[1]
 c=a[2]
-e_0_exp = expm(-D_TAU *(-energy_new + H_zero))
-
+exp_e_0 = np.exp(D_TAU * energy_new)
+expr_zero = np.exp(D_TAU*(energy_new - H_zero))
 
 print('energy time = ', time()-energy_time_st)
 
@@ -321,7 +321,7 @@ while (j<NUM_STEPS+1):
     #a=  measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,0)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
     #energy_new= a[0]
     #print('energy before update', energy_new)
-    walkers.mats_up,walkers.weights = update_hyb(PSI_T_up_0, PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,e_0_exp,H1_self_half_exp,propagator)
+    walkers.mats_up,walkers.weights = update_hyb(PSI_T_up_0, PSI_T_up,walkers.mats_up,walkers.weights,ql,expr_zero,hamil.one_body,D_TAU,exp_e_0,H1_self_half_exp,propagator)
  
     print('update test time = ', time()-update_time_st)
     #walkers.weights=walkers.weights/np.sum(walkers.weights)
