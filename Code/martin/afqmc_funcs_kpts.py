@@ -688,7 +688,7 @@ def rebalance_comb(weights):
     return new_indices
 
 
-def rebalance_global(comm, walkers_mats_up, walkers_weights):
+def rebalance_global(comm, walkers_mats_up, walkers_weights, backend):
     rank = comm.Get_rank()
     size = comm.Get_size()
 
@@ -708,7 +708,8 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights):
         norm_weights = all_weights.real * norm_factor
 
         # Random bias (shift)
-        bias = -np.random.random()
+        bias = -backend.random_uniform(())  # or float_type if appropriate
+
 
         # Determine how many copies (instances) each walker has after resampling
         instances = np.zeros(total_n, dtype=int)

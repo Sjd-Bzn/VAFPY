@@ -138,9 +138,9 @@ def gen_A_o_full(h2):
 
 
 def main(precision, backend):
-    print()
-    max_seed = np.iinfo(np.int32).max
-    seed = np.random.randint(max_seed)
+    #print()
+   # max_seed = np.iinfo(np.int32).max
+   # seed = np.random.randint(max_seed)
     if backend == "numpy":
         backend = NumpyBackend(seed)
     elif backend == "jax":
@@ -168,9 +168,9 @@ def main(precision, backend):
     trial_det, walkers = initialize_determinant(config)
     hamiltonian.setup_energy_expressions(config, trial_det)
 
-    np.random.seed(34841311)
-    x_e_Q = np.random.randn(config.num_g, config.num_walkers)
-    x_o_Q = np.random.randn(config.num_g, config.num_walkers)
+    #np.random.seed(34841311)
+    #x_e_Q = np.random.randn(config.num_g, config.num_walkers)
+    #x_o_Q = np.random.randn(config.num_g, config.num_walkers)
     x_e_Qs = x_e_Q.astype(np.single)
     x_o_Qs = x_o_Q.astype(np.single)
     hamiltonian.test_random_field = np.concatenate((x_e_Qs, x_o_Qs), axis=0)
@@ -187,8 +187,8 @@ def main(precision, backend):
     E_hf = measure_energy(config, trial_det, walkers, hamiltonian)
     expected = 631.88947 - 2.8974954e-09j
     check_hf = np.isclose(E_hf, expected)
-    np.random.seed(1887431)
-    random_change = config.backend.array(np.random.rand(*walkers.slater_det.shape))
+    #np.random.seed(1887431)
+    #random_change = config.backend.array(np.random.rand(*walkers.slater_det.shape))
     walkers.slater_det += 0.05 * random_change.astype(config.complex_type)
     E_random = measure_energy(config, trial_det, walkers, hamiltonian)
     expected = 631.8965 - 0.009482565j
@@ -215,15 +215,27 @@ class JaxBackend(Backend):
         self._key, subkey = jax.random.split(self._key)
         return jax.random.normal(subkey, shape, dtype)
 
+    def random_uniform(self, shape, dtype):
+        self._key, subkey = jax.random.split(self._key)
+        return jax.random.uniform(subkey, shape, dtype=dtype)
+
+
 
 class NumpyBackend(Backend):
     def __init__(self, seed):
         super().__init__(np)
         self.block_diag = scipy.linalg.block_diag
-        self._generator = np.random.default_rng(seed)
-
+        self._generator_1 = np.random.default_rng(seed)
+        #self._generator_2 = np.random.default_rng(seed)
+         
     def random_normal(self, shape, dtype):
-        return self._generator.standard_normal(shape, dtype)
+        #a = self._generator_1.standard_normal(shape, dtype)
+        #b = self._generator_2.standard_normal(shape, dtype)
+        #print(np.allclose(a, b))
+        return self._generator_1.standard_normal(shape).astype(dtype)
+    
+    def random_uniform(self, shape, dtype):
+        return self._generator_1.uniform(size=shape).astype(dtype)
 
 
 @dataclass
@@ -403,7 +415,7 @@ def obtain_H1(config):
     Reshape H1 (H1.npy shape is num_orb, num_orb, num_k
     we implement the k_points to the H1)
     """
-    input_h1 = config.backend.load("H1.npy").astype(config.complex_type)
+    input_h1 = config.backend.load("H1_svd.npy").astype(config.complex_type)
     output_h1 = config.backend.moveaxis(input_h1, -1, 0)
     return config.backend.block_diag(*output_h1)
 
@@ -516,6 +528,82 @@ def biorthogonalize(backend, trial, slater_det):
 def project_trial(backend, trial, slater_det):
     overlap = trial.T @ slater_det
     return backend.linalg.det(overlap)**2
+
+def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    local_n, N_orb, N_elec = walkers_mats_up.shape
+    total_n = local_n * size
+
+    # Step 1: Gather weights globally
+    all_weights = None
+    if rank == 0:
+        all_weights = np.empty(total_n, dtype=np.complex128)
+    comm.Gather(walkers_weights, all_weights, root=0)
+
+    # Step 2: Normalize weights and determine global instances (rank 0 only)
+    instances = None
+    if rank == 0:
+        norm_factor = total_n / np.sum(all_weights.real)
+        norm_weights = all_weights.real * norm_factor
+
+        # Random bias (shift)
+        bias = -config.backend.random_uniform((), config.float_type)  
+
+
+        # Determine how many copies (instances) each walker has after resampling
+        instances = np.zeros(total_n, dtype=int)
+        cumulative_sum = bias
+        previous = 0
+        for i in range(total_n):
+            cumulative_sum += norm_weights[i]
+            current = int(np.ceil(cumulative_sum))
+            instances[i] = current - previous
+            previous = current
+
+    # Step 3: Broadcast instances to all ranks
+    if rank != 0:
+        instances = np.empty(total_n, dtype=int)
+    comm.Bcast(instances, root=0)
+
+    # Step 4: Determine global mapping of walkers after rebalancing
+    new_total_walkers = np.sum(instances)
+    map_indices = np.empty(new_total_walkers, dtype=int)
+    count = 0
+    for idx, num_instances in enumerate(instances):
+        for _ in range(num_instances):
+            map_indices[count] = idx
+            count += 1
+
+    # Step 5: Distribute resampled walkers evenly back to ranks
+    assert new_total_walkers == total_n, "Walker count mismatch after rebalancing."
+
+    # Scatter the new walkers based on the global mapping
+    # Gather all walkers to rank 0 first
+    all_mats_up = None
+    if rank == 0:
+        all_mats_up = np.empty((total_n, N_orb, N_elec), dtype=np.complex128)
+    comm.Gather(walkers_mats_up, all_mats_up, root=0)
+
+    # Rearrange walkers according to the resampled indices
+    resampled_mats_up = None
+    if rank == 0:
+        resampled_mats_up = all_mats_up[map_indices]
+
+    # Scatter evenly back to ranks
+    new_mats_up = np.empty((local_n, N_orb, N_elec), dtype=np.complex128)
+    comm.Scatter(resampled_mats_up, new_mats_up, root=0)
+
+    # Step 6: Reset weights uniformly
+    new_weights = np.ones(local_n, dtype=np.complex128)
+
+    return new_mats_up, new_weights
+
+
+
+
+
 
 if __name__ == "__main__":
     main("single", "numpy")

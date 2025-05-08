@@ -1,0 +1,6 @@
+Calculating ground state energy
+E_gs_afqmc = 111.4238655069496
++- 0.025814641145503386
+Number of steps with rare events = 45
+Total number of rare events = 46
+Correlation energy = (-2.6537655133277696+1.1443047786075102e-15j)

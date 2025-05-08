@@ -1,11 +1,11 @@
       SYSTEM   : Diamond
       
       System Properties:
-      NGVEC    : 848
+      NGVEC    : 36
       NEUP     : 4
       EBANDS   : -20.16022842
       NEDOWN   : 4
-      NORB     : 64
+      NORB     : 8
       EHZB     : 0 #-142.09249198310414
       ECONST   : 0 #9.20490701
       SPIN     : 0
@@ -15,12 +15,12 @@
       PROPAG   : S2   ### S1, S2, Taylor
       EQLB     : 0.1
       DTAU     : 0.005
-      NWAK     : 3200
-      NSTP     : 40000
+      NWAK     : 1000
+      NSTP     : 1000
       BLKDIV   : 15
       KPOINT   : 1
       TMAX     : 184800
-      OTEY     : 8
+      OTEY     : 6
       TIMG     : 10
       TREL     : 10
                      

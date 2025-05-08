@@ -323,9 +323,10 @@ start_time = time()
 update_method = set_update_method(UPDATE_METHOD)
 
 
-max_seed = np.iinfo(np.int32).max
-seed = np.random.randint(max_seed)
+#max_seed = np.iinfo(np.int32).max
+#seed = np.random.randint(max_seed)
 rank = comm.Get_rank()
+seed = 12000
 #base_seed = 12345
 #seed = base_seed + 9999 * rank
 #np.random.seed(seed)
@@ -428,7 +429,7 @@ while (j<NUM_STEPS+1):
         if REBAL_PERIODICITY!=0 and j%REBAL_PERIODICITY==0: 
         #    print("Rebalencing")
             comm = MPI.COMM_WORLD
-            walkers.slater_det, walkers.weights = rebalance_global(comm, walkers.slater_det, walkers.weights)       ######global rebalencing by gathering slater amd weights on rank 0
+            walkers.slater_det, walkers.weights = new.rebalance_global(comm, walkers.slater_det, walkers.weights, config)       ######global rebalencing by gathering slater amd weights on rank 0
             #rebalanced_weights_indices = rebalance_comb(walkers.weights)
             #walkers.slater_det = walkers.slater_det[rebalanced_weights_indices]
             #walkers.weights = init_walkers_weights(NUM_WALKERS)
