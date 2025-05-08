@@ -1,5 +1,5 @@
 Calculating ground state energy
 E_gs_afqmc = 111.52382470975081
-+- 0.021383780560630356
++- 0.02138378056063014
 Number of steps with rare events = 0
 Total number of rare events = 0
