@@ -1,4 +1,5 @@
 
+
 #@pytest.mark.skip
 def test_diamond():
     import afqmc_RUN_kpts 
