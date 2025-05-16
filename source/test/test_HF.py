@@ -1,15 +1,27 @@
 from vafpy.functions import propagate_walkers
-from vafpy.functions import Hamiltonian 
+from vafpy.functions import Hamiltonian
 from vafpy.functions import Configuration
 from vafpy.functions import Walkers
 from vafpy.functions import NumpyBackend
 from vafpy.functions import obtain_H2
 from vafpy.functions import obtain_H1
-from vafpy.functions import initialize_determinant 
+from vafpy.functions import initialize_determinant
+import pathlib
 import numpy as np
+import pytest
 from mpi4py import MPI
 
-def test_HF():
+
+@pytest.mark.parametrize("testcase", ["diamond"])
+def test_HF(testcase, tmp_path, monkeypatch):
+    # Create symbolic link to all files in reference directory
+    reference_directory = pathlib.Path(__file__).parent / testcase
+    for file in reference_directory.iterdir():
+        (tmp_path / file.name).symlink_to(file.resolve())
+
+    # Change working directory to tmp_path for the duration of the test
+    monkeypatch.chdir(tmp_path)
+
     max_seed = np.iinfo(np.int32).max
     seed = np.random.randint(max_seed)
     backend = NumpyBackend(seed)
@@ -27,18 +39,18 @@ def test_HF():
         precision="Double",
         backend=backend,
         )
- 
+
     hamiltonian = Hamiltonian(
         one_body=obtain_H1(config),
         two_body=obtain_H2(config),
         )
-    
+
     trial_det, walkers = initialize_determinant(config)
     hamiltonian.setup_energy_expressions(config, trial_det)
     h_0 = 1.05
     e_0 = 0
     new_walkers, num_rare_event = propagate_walkers(config, trial_det, walkers, hamiltonian, h_0, e_0)
-    
+
 
 
 
