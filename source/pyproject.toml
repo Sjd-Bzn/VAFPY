@@ -1,0 +1,21 @@
+[project]
+name = "vafpy"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "h5py>=3.13.0",
+    "jax>=0.6.0",
+    "mpi4py>=4.0.3",
+    "numpy>=2.2.5",
+    "opt-einsum>=3.4.0",
+    "pyyaml>=6.0.2",
+    "scipy>=1.15.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "scalene>=1.5.51",
+]
