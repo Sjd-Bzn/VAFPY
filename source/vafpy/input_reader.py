@@ -7,7 +7,7 @@ from types import SimpleNamespace
 def read():
     afqmc = SimpleNamespace()
 
-    with open ("INCAR_AFQMC", "r") as f:
+    with open ("vafpy.in", "r") as f:
         inputs = yaml.safe_load(f)
 
 

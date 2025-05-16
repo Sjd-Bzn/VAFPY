@@ -11,7 +11,7 @@ import sys
 from os.path import exists
 log_file = 'log'
 #sys.stdout = open(log_file, "w")
-import functions as new
+import vafpy.functions as new
 
 
 def main():
@@ -509,7 +509,7 @@ def main():
 
 
     if afqmc.first_cpu:
-        print()
+        print("all done")
 
 
 if __name__ == "__main__":
