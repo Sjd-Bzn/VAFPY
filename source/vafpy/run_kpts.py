@@ -369,9 +369,10 @@ def main():
 
     hartree = new.measure_hartree(config, trial_det, walkers, hamiltonian)
     h0= (np.exp(config.timestep*hartree/(2*config.num_electron)))
-    h0 = h0.astype(np.complex128)
+    h0 = h0.astype(np.complex64)
     print("h0", h0)
-    e_hf = energy_new = energy_new = new.measure_energy(config, trial_det, walkers, hamiltonian)
+    e_hf =  energy_new = energy_new = new.measure_energy(config, trial_det, walkers, hamiltonian)
+    E_HF = e_hf.real
     weights_file = open("weights_history.txt", "w")
     weights_file.write(f"{0}:   {np.mean(walkers.weights)}\n")
     rare_event_steps_count = 0   # Number of steps that had at least one rare event
@@ -492,7 +493,8 @@ def main():
         print('Calculating ground state energy...')
         print()
         print ('E_gs_afqmc = ', np.mean(data[st:en]), '+-', np.sqrt(max(a[1])))
-        print('Block mean = ', a[2])
+        #print('Block mean = ', a[2])
+        print ('Correlation Energy = ', np.mean(data[st:en]) - E_HF)
         print('Total number of the rare event= ', rare_event_total_count)
         print('Numver of steps with rare events= ', rare_event_steps_count)
 
@@ -506,6 +508,7 @@ def main():
             outcar.write("Calculating ground state energy\n")
             outcar.write(f"E_gs_afqmc = {np.mean(data[st:en])}\n")
             outcar.write(f"+- {np.sqrt(max(a[1]))}\n")
+            outcar.write(f"Correlation Energy = {np.mean(data[st:en])} - E_HF \n")
             outcar.write(f"Number of steps with rare events = {rare_event_steps_count}\n")
             outcar.write(f"Total number of rare events = {rare_event_total_count}\n")
 
