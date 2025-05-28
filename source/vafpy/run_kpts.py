@@ -330,10 +330,10 @@ def main():
 #    update_method = set_update_method(afqmc.UPDATE_METHOD)
 
 
-    #max_seed = np.iinfo(np.int32).max
-    #seed = np.random.randint(max_seed)
+    max_seed = np.iinfo(np.int32).max
+    seed = np.random.randint(max_seed)
     rank = afqmc.comm.Get_rank()
-    seed = 12000
+    #seed = 12000
     #base_seed = 12345
     #seed = base_seed + 9999 * rank
     #np.random.seed(seed)
@@ -376,6 +376,8 @@ def main():
     weights_file.write(f"{0}:   {np.mean(walkers.weights)}\n")
     rare_event_steps_count = 0   # Number of steps that had at least one rare event
     rare_event_total_count = 0   # Total number of walker-rare-events across all steps
+    #tot_auxiliary_time = 0
+    print("HF energy", e_hf)
     while (j<afqmc.NUM_STEPS+1):
         update_time_st=time()
         #walkers.mats_up,walkers.weights = update_walker(PSI_T_up_0,PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,0,update_method)
@@ -385,10 +387,10 @@ def main():
         #energy_new= a[0]
         #print('energy before update', energy_new)
         
-        new_walkers, num_rare_event=new.propagate_walkers(config, trial_det, walkers, hamiltonian, h0, energy_new)
+        new_walkers, num_rare_event =new.propagate_walkers(config, trial_det, walkers, hamiltonian, h0, energy_new)
         walkers= new_walkers
         avg_weight = np.mean(walkers.weights)
-
+      #  tot_auxiliary_time += au_time
         # Write the average to a file (one line per step).
         weights_file.write(f"{j}:   {avg_weight}\n")
         if num_rare_event > 0:
@@ -475,7 +477,7 @@ def main():
         print('Total number of rare events = ',rare_event_total_count)
         print('total runtime = ', -start_time+time())
         print('Please see', afqmc.output_file)
-        print()
+        #print('tot auxiliary time', tot_auxiliary_time)
         print('##########################')
         print()
 

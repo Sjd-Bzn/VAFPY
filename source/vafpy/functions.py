@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import types
-
+from time import time
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -359,12 +359,15 @@ class Hamiltonian:
         return -self._exchange_expression(theta, theta) #- self._singularity_correction
 
     def create_auxiliary_field(self, config, theta):
+#        st_time = time()
         random_field = self.create_random_field(config)
         force_bias = -2j * self._sqrt_tau * self._force_bias_expression(theta)
         # Boundary condition for rare events based on: https://doi.org/10.1103/PhysRevB.80.214116
         force_bias = config.backend.where(abs(force_bias) > 1, 0.0, force_bias)
         arg = contract("gw, gw -> w", random_field - 0.5 * force_bias, force_bias)
         field = 1j * self._sqrt_tau * self._auxiliary_field(random_field - force_bias)
+ #       fi_time = time()
+  #      print("Aux time" ,st_time - fi_time)
         return field, np.exp(arg)
 
     def create_random_field(self, config):
@@ -464,11 +467,12 @@ def measure_hartree(config, trial, walkers, hamiltonian):
     return weighted_energy_global / sum_weights_global
 
 
-
+#tot_aux_time = 0
 def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0):
     new_walkers = Walkers(np.zeros_like(walkers.slater_det), np.zeros_like(walkers.weights))
     theta = biorthogonalize(config.backend, trial, walkers.slater_det)
     h2, importance = hamiltonian.create_auxiliary_field(config, theta)
+    #tot_aux_time += au_time
     num_rare_event = 0
 #    print('h_2 type', h2.dtype, h2.__class__)
 
@@ -484,6 +488,7 @@ def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0):
 
     elif config.propagator == "S2":
         half_step_with_h1 = hamiltonian.exp_h1_half @ walkers.slater_det
+        #print("half_step_with_h1" ,half_step_with_h1.shape) 
         full_step_with_h2 = apply_taylor(config, h2, half_step_with_h1)
         half_step_with_h1 = hamiltonian.exp_h1_half @ full_step_with_h2
         new_walkers.slater_det = half_step_with_h1 * h_0 
