@@ -544,7 +544,7 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
     # Step 1: Gather weights globally
     all_weights = None
     if rank == 0:
-        all_weights = np.empty(total_n, dtype=np.complex128)
+        all_weights = np.empty(total_n, dtype=config.complex_type)
     comm.Gather(walkers_weights, all_weights, root=0)
 
     # Step 2: Normalize weights and determine global instances (rank 0 only)
@@ -588,7 +588,7 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
     # Gather all walkers to rank 0 first
     all_mats_up = None
     if rank == 0:
-        all_mats_up = np.empty((total_n, N_orb, N_elec), dtype=np.complex128)
+        all_mats_up = np.empty((total_n, N_orb, N_elec), dtype=config.complex_type)
     comm.Gather(walkers_mats_up, all_mats_up, root=0)
 
     # Rearrange walkers according to the resampled indices
@@ -597,11 +597,11 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
         resampled_mats_up = all_mats_up[map_indices]
 
     # Scatter evenly back to ranks
-    new_mats_up = np.empty((local_n, N_orb, N_elec), dtype=np.complex128)
+    new_mats_up = np.empty((local_n, N_orb, N_elec), dtype=config.complex_type)
     comm.Scatter(resampled_mats_up, new_mats_up, root=0)
 
     # Step 6: Reset weights uniformly
-    new_weights = np.ones(local_n, dtype=np.complex128)
+    new_weights = np.ones(local_n, dtype=config.complex_type)
 
     return new_mats_up, new_weights
 
