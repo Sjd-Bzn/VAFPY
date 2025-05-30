@@ -441,7 +441,7 @@ def main():
                 comm = MPI.COMM_WORLD
                 walkers.slater_det, walkers.weights = new.rebalance_global(comm, walkers.slater_det, walkers.weights, config)       ######global rebalencing by gathering slater amd weights on rank 0
                 #rebalanced_weights_indices = rebalance_comb(walkers.weights)
-                print("Rebalencing done", flush = True )
+                #print("Rebalencing done", flush = True )
                 #walkers.slater_det = walkers.slater_det[rebalanced_weights_indices]
                 #walkers.weights = init_walkers_weights(NUM_WALKERS)
             j+=1
