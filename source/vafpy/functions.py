@@ -368,7 +368,7 @@ class Hamiltonian:
         field = 1j * self._sqrt_tau * self._auxiliary_field(random_field - force_bias)
  #       fi_time = time()
   #      print("Aux time" ,st_time - fi_time)
-        return field, np.exp(arg)
+        return field, config.backend.exp(arg)
 
     def create_random_field(self, config):
         if self.test_random_field is None:
@@ -418,7 +418,7 @@ def obtain_H1(config):
     Reshape H1 (H1.npy shape is num_orb, num_orb, num_k
     we implement the k_points to the H1)
     """
-    input_h1 = config.backend.load("H1_svd.npy").astype(config.complex_type)
+    input_h1 = config.backend.load("H1.npy").astype(config.complex_type)
     output_h1 = config.backend.moveaxis(input_h1, -1, 0)
     return config.backend.block_diag(*output_h1)
 
@@ -500,18 +500,18 @@ def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0):
     new_overlap = project_trial(config.backend, trial, new_walkers.slater_det)
     old_overlap = project_trial(config.backend, trial, walkers.slater_det)
     overlap_ratio = new_overlap / old_overlap
-    cos_alpha = np.cos(config.backend.angle(overlap_ratio))
-    factor = abs(overlap_ratio * importance * (np.exp(config.timestep*e_0))) 
-    
-    factor = np.where(factor < 10, factor, 0)  # Fixes ambiguous truth value issue
+    cos_alpha = config.backend.cos(config.backend.angle(overlap_ratio))
+    factor = abs(overlap_ratio * importance * (config.backend.exp(config.timestep*e_0)))
+
+    factor = config.backend.where(factor < 10, factor, 0)  # Fixes ambiguous truth value issue
     #print("factor", np.mean(factor))
-    num_rare_event += np.sum(factor == 0)  # Count number of events where factor was reset
-    #if np.all(np.abs(factor) < 10):  
+    num_rare_event += config.backend.sum(factor == 0)  # Count number of events where factor was reset
+    #if np.all(np.abs(factor) < 10):
    #     factor = factor
    # else:
    #     factor = 0
    #     num_rare_event += 1
-    a = abs(factor)* np.maximum(0, cos_alpha)
+    a = abs(factor)* config.backend.maximum(0, cos_alpha)
     new_walkers.weights = a * walkers.weights
 
     return new_walkers, num_rare_event
@@ -533,6 +533,36 @@ def biorthogonalize(backend, trial, slater_det):
 def project_trial(backend, trial, slater_det):
     overlap = trial.T @ slater_det
     return backend.linalg.det(overlap)**2
+
+
+def rebalance_comb(weights):
+    """
+    Rebalances weights using systematic (stratified) resampling.
+    Returns an array of new walker indices (length = N).
+    """
+    N = len(weights)
+    c = np.cumsum(weights.real)
+    W = c[-1]            # total weight
+    # random offset in [0, W/N)
+    r = np.random.uniform(0, W/N)
+
+    new_indices = np.zeros(N, dtype=int)
+
+    # pointer for searching in c
+    i = 0
+    for k in range(N):
+        U = r + k*(W/N)
+        # Move i forward until c[i] >= U
+        while U > c[i]:
+            i += 1
+        new_indices[k] = i
+
+    return new_indices
+
+
+
+
+
 
 def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
     rank = comm.Get_rank()
@@ -709,6 +739,12 @@ def reortho_qr(walker_matrix, config):
     '''
     Q, R = config.backend.linalg.qr(walker_matrix)
     return Q
+
+def init_walkers_weights(n_walkers):
+    '''
+    It initializes the weights.
+    '''
+    return np.ones(n_walkers, dtype=np.complex64)
 
 
 def blockAverage(datastream, block_divisor):
