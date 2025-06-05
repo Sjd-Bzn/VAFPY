@@ -451,7 +451,7 @@ def measure_energy(config, trial, walkers, hamiltonian):
     sum_weights = config.backend.sum(walkers.weights)
     weighted_energy_global = config.comm.allreduce(weighted_energy)
     sum_weights_global = config.comm.allreduce(sum_weights)
-    return weighted_energy_global / sum_weights_global
+    return weighted_energy_global / sum_weights_global, weighted_energy_global, sum_weights_global
 
 def measure_hartree(config, trial, walkers, hamiltonian):
     # compute energies locally
@@ -605,12 +605,109 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
 
     return new_mats_up, new_weights
 
+#def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
+#    backend = config.backend
+#    rank = comm.Get_rank()
+#    size = comm.Get_size()
+#
+#    local_n, N_orb, N_elec = walkers_mats_up.shape
+#    total_n = local_n * size
+#
+#    # Step 1: Gather weights globally
+#    all_weights = None
+#    if rank == 0:
+#        all_weights = backend.empty(total_n, dtype=config.complex_type)
+#    # For MPI, ensure walkers_weights is on host (NumPy)
+#    comm.Gather(
+#        walkers_weights if backend.__name__ == 'numpy' else backend.asarray(walkers_weights),
+#        all_weights,
+#        root=0
+#    )
+#
+#    # Step 2: Normalize weights and determine global instances (rank 0 only)
+#    instances = None
+#    if rank == 0:
+#        total_weight = backend.sum(all_weights.real)
+#        norm_factor = total_n / total_weight
+#        norm_weights = all_weights.real * norm_factor
+#
+#        # Random bias (shift)
+#        bias = -config.backend.random_uniform((), config.float_type)
+#
+#        # Determine how many copies (instances) each walker has after resampling
+#        instances = backend.zeros(total_n, dtype=int)
+#
+#        cumulative_sum = bias
+#        previous = 0
+#        instances_list = []  # We cannot dynamically index arrays easily in JAX, so use Python list
+#
+#        norm_weights_host = backend.device_get(norm_weights) if hasattr(backend, 'device_get') else norm_weights
+#        for w in norm_weights_host:
+#            cumulative_sum += w
+#            current = int(backend.ceil(cumulative_sum))
+#            instances_list.append(current - previous)
+#            previous = current
+#
+#        instances = backend.array(instances_list, dtype=int)
+#
+#    # Step 3: Broadcast instances to all ranks
+#    if rank != 0:
+#        instances = backend.empty(total_n, dtype=int)
+#    comm.Bcast(
+#        instances if backend.__name__ == 'numpy' else backend.asarray(instances),
+#        root=0
+#    )
+#
+#    # Step 4: Determine global mapping of walkers after rebalancing
+#    new_total_walkers = backend.sum(instances).item()  # get scalar
+#    map_indices = backend.empty(new_total_walkers, dtype=int)
+#
+#    count = 0
+#    indices_list = []
+#    instances_host = backend.device_get(instances) if hasattr(backend, 'device_get') else instances
+#    for idx, num_instances in enumerate(instances_host):
+#        for _ in range(num_instances):
+#            indices_list.append(idx)
+#
+#    map_indices = backend.array(indices_list, dtype=int)
+#
+#    # Step 5: Distribute resampled walkers evenly back to ranks
+#    assert new_total_walkers == total_n, "Walker count mismatch after rebalancing."
+#
+#    all_mats_up = None
+#    if rank == 0:
+#        all_mats_up = backend.empty((total_n, N_orb, N_elec), dtype=config.complex_type)
+#    comm.Gather(
+#        walkers_mats_up if backend.__name__ == 'numpy' else backend.asarray(walkers_mats_up),
+#        all_mats_up,
+#        root=0
+#    )
+#
+#    resampled_mats_up = None
+#    if rank == 0:
+#        resampled_mats_up = all_mats_up[map_indices]
+#
+#    new_mats_up = backend.empty((local_n, N_orb, N_elec), dtype=config.complex_type)
+#    comm.Scatter(
+#        resampled_mats_up if backend.__name__ == 'numpy' else backend.asarray(resampled_mats_up),
+#        new_mats_up,
+#        root=0
+#    )
+#
+#    # Step 6: Reset weights uniformly
+#    new_weights = backend.ones(local_n, dtype=config.complex_type)
+#
+#    return new_mats_up, new_weights
+#
 
-def reortho_qr(walker_matrix):
+
+
+
+def reortho_qr(walker_matrix, config):
     '''
     It uses QR decomposition to reorthogonalize the orbitals in a single walker.
     '''
-    Q, R = np.linalg.qr(walker_matrix)
+    Q, R = config.backend.linalg.qr(walker_matrix)
     return Q
 
 

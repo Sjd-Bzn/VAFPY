@@ -369,9 +369,10 @@ def main():
 
     hartree = new.measure_hartree(config, trial_det, walkers, hamiltonian)
     h0= (np.exp(config.timestep*hartree/(2*config.num_electron)))
-    h0 = h0.astype(np.complex64)
-    print("h0", h0)
-    e_hf =  energy_new = energy_new = new.measure_energy(config, trial_det, walkers, hamiltonian)
+    h0 = h0.astype(config.complex_type)
+    #print("h0", h0)
+    a = new.measure_energy(config, trial_det, walkers, hamiltonian)
+    e_hf =  energy_new = energy_new = a[0]
     E_HF = e_hf.real
     weights_file = open("weights_history.txt", "w")
     weights_file.write(f"{0}:   {np.mean(walkers.weights)}\n")
@@ -383,7 +384,9 @@ def main():
         update_time_st=time()
         #walkers.mats_up,walkers.weights = update_walker(PSI_T_up_0,PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,0,update_method)
         old_walkers = walkers
-        
+        if j % 10 == 0:
+            print("slater_det", walkers.slater_det.shape, walkers.slater_det.dtype, walkers.slater_det.__class__)
+            print("weights", walkers.weights.shape, walkers.weights.dtype, walkers.weights.__class__, flush=True)   
         #a=  measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,0)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
         #energy_new= a[0]
         #print('energy before update', energy_new)
@@ -410,11 +413,11 @@ def main():
         #energy_new = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,hamil.two_body,h2_t,ql,m_q,ALPHA_FULL,ALPHA_FULL_T,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
         if j%afqmc.SAMP_FREQ==0:
             t1=time()
-            energy_new = new.measure_energy(config, trial_det, walkers, hamiltonian)
+            a = new.measure_energy(config, trial_det, walkers, hamiltonian)
             #a=  measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,e_hf)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
-            #energy_new= a[0]
-            #b = a[1]
-            #c = a[2]
+            energy_new= a[0]
+            b = a[1]
+            c = a[2]
     #        e_one_new =  E_one(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)
     #        hartree_new = Hartree(PSI_T_up,walkers.weights,walkers.mats_up)
     #        exchange_new = Exchange(PSI_T_up,walkers.weights,walkers.mats_up)
@@ -427,14 +430,14 @@ def main():
             e_hf = e_hf /(j+1)
             if afqmc.first_cpu:
                 print(j*afqmc.D_TAU, e_hf)#, e_one_new, hartree_new, exchange_new)
-                txt = str(j*afqmc.D_TAU) + '\t' + str(energy_new.real) + '\t' + str(energy_new.imag) + '\n' #+ str(exchange_new.real) + '\n'
+                txt = str(j*afqmc.D_TAU) + '\t' + str(energy_new.real) + '\t' + str(energy_new.imag) + '\t' + str(b.real) + '\t' + str(c.real) + '\n'
                 file_out.write(txt)
                 print()
         if True: #abs(energy.imag)<abs(trsh_imag) and abs(energy.real-e_hf.real)<abs(trsh_real): #ratio*(energy.real+en_const))):# and (abs((energy.real-e_hf.real)/(en_const+e_hf.real))<MAX_ACC_VAL):
      
             if j%afqmc.REORTHO_PERIODICITY == 0:
                 #for i in range (0, NUM_WALKERS):
-                walkers.slater_det = new.reortho_qr(walkers.slater_det)
+                walkers.slater_det = new.reortho_qr(walkers.slater_det, config)
                 #print('NUM_WALKERS = ', NUM_WALKERS)
             if afqmc.REBAL_PERIODICITY!=0 and j%afqmc.REBAL_PERIODICITY==0: 
                 #print("Rebalencing", flush = True )
