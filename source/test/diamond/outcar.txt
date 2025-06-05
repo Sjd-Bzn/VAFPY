@@ -1,0 +1,18 @@
+Calculating ground state energy
+E_gs_afqmc = 112.2686344526594
++- 0.09523590828717553
+Correlation Energy = 112.2686344526594 - E_HF 
+Number of steps with rare events = 0
+Total number of rare events = 0
+Calculating ground state energy
+E_gs_afqmc = 112.29705081180552
++- 0.08962463864088865
+Correlation Energy = 112.29705081180552 - E_HF 
+Number of steps with rare events = 0
+Total number of rare events = 0
+Calculating ground state energy
+E_gs_afqmc = 112.28718193750001
++- 0.07111235503355495
+Correlation Energy = 112.28718193750001 - E_HF 
+Number of steps with rare events = 0
+Total number of rare events = 0

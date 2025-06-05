@@ -16,7 +16,7 @@
       EQLB     : 0.2
       DTAU     : 0.00075
       NWAK     : 1000
-      NSTP     : 10 #00
+      NSTP     : 100
       BLKDIV   : 15
       KPOINT   : 1
       TMAX     : 184800
@@ -27,7 +27,7 @@
       METHOD IMPLEMENTATION:
       UPDTM    : H
       REOPRI   : 1
-      REBPRI   : 10
+      REBPRI   : 3
       SMFRQ    : 1
       CHPRI    : 99999
 
@@ -39,5 +39,5 @@
       HFSTP    : 1
       
       Config:
-      PRECSION : Double   #### Double & Single
-      BACKEND  : NumPy     ####JAX
+      PRECSION : Single   #### Double & Single
+      BACKEND  : JAX     ####JAX
