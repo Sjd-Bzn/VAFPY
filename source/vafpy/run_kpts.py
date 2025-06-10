@@ -344,6 +344,8 @@ def main():
         backend = new.NumpyBackend(seed)
     elif backend == "JAX":
         backend = new.JaxBackend(seed)
+    elif backend == "CuPy":
+        backend = new.CupyBackend(seed)
     else:
         raise NotImplementedError(f"Selected {backend=} not implemented!")
     config = new.Configuration(

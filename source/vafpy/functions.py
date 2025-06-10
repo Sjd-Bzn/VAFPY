@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import types
 from time import time
 import numpy as np
+import cupy as cp
 import jax
 import jax.numpy as jnp
 import scipy
@@ -37,14 +38,14 @@ def reshape_H1(H1, num_k, num_orb):
         h1[i*num_orb:(i+1)*num_orb,i*num_orb:(i+1)*num_orb] = H1[:,:,i]
     return h1
 
-def A_af_MF_sub(trial_0,trial,h2,q_list,num_k,num_orb,num_electrons_up):
+def A_af_MF_sub(trial_0,trial,h2,q_list,num_k,num_orb,num_electrons_up, config):
     '''
     It returns two body Hamiltonian after mean-field subtraction.
     '''
     avg_A_mat = np.zeros_like(h2)
     h2_shape = h2.shape
     for Q in range(1,num_k+1):
-        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q,num_orb,num_electrons_up)
+        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q,num_orb,num_electrons_up, config)
         K1s_K2s = get_k1s_k2s(q_list,Q)
         for K1,K2 in K1s_K2s:
             for g in range(h2_shape[2]):
@@ -52,16 +53,18 @@ def A_af_MF_sub(trial_0,trial,h2,q_list,num_k,num_orb,num_electrons_up):
                     avg_A_mat[(K1-1)*num_orb+r][(K2-1)*num_orb+r][g]=avg_A_vec_Q[g]
     return h2-avg_A_mat/num_electrons_up/2/num_k
 
-def avg_A_Q(trial_0,trial,h2,q_list,q_selected,num_orb,num_electrons_up):
+def avg_A_Q(trial_0,trial,h2,q_list,q_selected,num_orb,num_electrons_up, config):
     '''
     It returns average of two-body Hamiltonian for a specified Q.
     '''
     K1s_K2s = get_k1s_k2s(q_list,q_selected)
     theta_full = theta(trial, trial)
     h2_shape = h2.shape[2]
-    result = 1j*np.zeros(h2_shape)
+    result = 1j*config.backend.zeros(h2_shape)
+    #result = 1j*cp.zeros(h2_shape)
     for K1,K2 in K1s_K2s:
-        alpha = get_alpha_k1_k2(trial_0,h2,K1,K2,num_orb)
+        alpha = get_alpha_k1_k2(trial_0,h2,K1,K2,num_orb, config)
+        print(f"{result.__class__=} {alpha.__class__=}")
         result += contract('iiG->G',contract('nrG,rm->nmG',alpha,theta_full[(K2-1)*num_orb:K2*num_orb,(K1-1)*num_electrons_up:K1*num_electrons_up]))
     return 2*result
 
@@ -95,12 +98,12 @@ def mean_field( h2, num_elec, num_band, num_k):
     #m = np.linalg.det( h2[:num_elec, : num_elec].T)
     return m
 
-def get_alpha_k1_k2(trial_0,h2,k1_idx,k2_idx,num_orb):                                                               #####! it doesnt use mean field subtraction
+def get_alpha_k1_k2(trial_0,h2,k1_idx,k2_idx,num_orb, config):                                                               #####! it doesnt use mean field subtraction
     '''
     It returns alpha to be used as an intermediate object to compute one-body reduced density tensors.
     '''
     A_Q = get_A_k1_k2(h2,k1_idx,k2_idx,num_orb)
-    result = np.einsum('ip,prG->irG',trial_0.T,A_Q)
+    result = config.backend.einsum('ip,prG->irG',trial_0.T,A_Q)
     return result
 
 def get_A_k1_k2(h2,k1_idx,k2_idx, num_orb):
@@ -109,14 +112,14 @@ def get_A_k1_k2(h2,k1_idx,k2_idx, num_orb):
     '''
     return h2[(k1_idx-1)*num_orb:k1_idx*num_orb,(k2_idx-1)*num_orb:k2_idx*num_orb,:]
 
-def H_1_mf(trial_0,trial,h2,h2_dagger,q_list,h1,num_k,num_orb,num_electrons_up):
+def H_1_mf(trial_0,trial,h2,h2_dagger,q_list,h1,num_k,num_orb,num_electrons_up, config):
     '''
     It returns one-body part of the Hamiltonian after mean-field subtraction.
     '''
     change = 1j*np.zeros_like(h1)
     for Q in range(1,num_k+1):
-        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q,num_orb,num_electrons_up)
-        avg_A_vec_Q_dagger = avg_A_Q(trial_0,trial,h2_dagger,q_list,Q,num_orb,num_electrons_up)
+        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q,num_orb,num_electrons_up, config)
+        avg_A_vec_Q_dagger = avg_A_Q(trial_0,trial,h2_dagger,q_list,Q,num_orb,num_electrons_up, config)
         K1s_K2s = get_k1s_k2s(q_list,Q)
         for K1,K2 in K1s_K2s:
             change[(K1-1)*num_orb:K1*num_orb,(K2-1)*num_orb:K2*num_orb] = contract('rpG->rp',contract('G,rpG->rpG',avg_A_vec_Q_dagger,h2[(K1-1)*num_orb:K1*num_orb,(K2-1)*num_orb:K2*num_orb,:])+contract('G,rpG->rpG',avg_A_vec_Q,h2_dagger[(K1-1)*num_orb:K1*num_orb,(K2-1)*num_orb:K2*num_orb,:]))
@@ -145,6 +148,8 @@ def main(precision, backend):
         backend = NumpyBackend(seed)
     elif backend == "jax":
         backend = JaxBackend(seed)
+    elif backend == "cupy":
+        backend = CupyBackend(seed)
     else:
         raise NotImplementedError(f"Selected {backend=} not implemented!")
     config = Configuration(
@@ -208,8 +213,19 @@ class Backend:
 class JaxBackend(Backend):
     def __init__(self, seed):
         super().__init__(jnp)
-        self.block_diag = jax.scipy.linalg.block_diag
+        #self.block_diag = jax.scipy.linalg.block_diag
         self._key = jax.random.key(seed)
+        #self.expm = jax.scipy.linalg.expm
+
+    
+    def block_diag(self, *matrices):
+        matrix_copy = [np.asarray(matrix) for matrix in matrices]
+        matrix = scipy.linalg.block_diag(*matrix_copy)
+        return jnp.array(matrix)
+
+    def expm(self, matrix):
+        result = scipy.linalg.expm(matrix)
+        return jnp.array(result)
 
     def random_normal(self, shape, dtype):
         self._key, subkey = jax.random.split(self._key)
@@ -225,6 +241,7 @@ class NumpyBackend(Backend):
     def __init__(self, seed):
         super().__init__(np)
         self.block_diag = scipy.linalg.block_diag
+        self.expm = scipy.linalg.expm
         self._generator_1 = np.random.default_rng(seed)
         #self._generator_2 = np.random.default_rng(seed)
          
@@ -236,6 +253,27 @@ class NumpyBackend(Backend):
     
     def random_uniform(self, shape, dtype):
         return self._generator_1.uniform(size=shape).astype(dtype)
+
+
+class CupyBackend(Backend):
+    def __init__(self, seed):
+        super().__init__(cp)
+        self._generator = cp.random.default_rng(seed)
+
+    def block_diag(self, *matrices):
+        matrix_copies = (matrix.get() for matrix in matrices)
+        matrix = scipy.linalg.block_diag(*matrix_copies)
+        return cp.array(matrix)
+
+    def expm(self, matrix):
+        exp_matrix = scipy.linalg.expm(matrix.get())
+        return cp.array(exp_matrix)
+
+    def random_normal(self, shape, dtype):
+        return self._generator.standard_normal(shape).astype(dtype)
+
+    def random_uniform(self, shape, dtype):
+        return self._generator.uniform(size=shape).astype(dtype)
 
 
 @dataclass
@@ -328,8 +366,8 @@ class Hamiltonian:
         #print("h_mf", h_mf)
         #print("h_sic", h_sic)
         self._h1 = -h1 * config.timestep
-        self._exp_h1 = expm(-h1 * config.timestep)
-        self._exp_h1_half = expm(-0.5 * h1 * config.timestep)
+        self._exp_h1 = config.backend.expm(-h1 * config.timestep)
+        self._exp_h1_half = config.backend.expm(-0.5 * h1 * config.timestep)
         two_body = self.compute_mean_field_two_body(config, trial_det, ql)
         alpha = contract("pi, prg -> irg", trial_det, two_body)
         self._sqrt_tau = config.backend.sqrt(config.timestep).astype(config.float_type)
@@ -380,13 +418,13 @@ class Hamiltonian:
     def compute_mean_field_one_body(self, config, trial_det, ql):
         # interface to legacy code
         h2_t = np.einsum('prG->rpG', self.two_body.conj())
-        h1_legacy = H_1_mf(trial_det,trial_det,self.two_body,h2_t,ql,self.one_body,config.num_kpoint,config.num_orbital,config.num_electron)
+        h1_legacy = H_1_mf(trial_det,trial_det,self.two_body,h2_t,ql,self.one_body,config.num_kpoint,config.num_orbital,config.num_electron, config)
         result = h1_legacy - self.one_body
         return config.backend.array(result, dtype=config.complex_type)
 
     def compute_mean_field_two_body(self, config, trial_det, ql):
         # interface to legacy code
-        h2_af_MF_sub = A_af_MF_sub(trial_det,trial_det,self.two_body,ql,config.num_kpoint,config.num_orbital,config.num_electron)
+        h2_af_MF_sub = A_af_MF_sub(trial_det,trial_det,self.two_body,ql,config.num_kpoint,config.num_orbital,config.num_electron, config)
         two_body_e = gen_A_e_full(h2_af_MF_sub)
         two_body_o = gen_A_o_full(h2_af_MF_sub)
         result = np.concatenate((two_body_e, two_body_o), axis=-1)
@@ -541,12 +579,12 @@ def rebalance_comb(weights):
     Returns an array of new walker indices (length = N).
     """
     N = len(weights)
-    c = np.cumsum(weights.real)
+    c = config.backend.cumsum(weights.real)
     W = c[-1]            # total weight
     # random offset in [0, W/N)
-    r = np.random.uniform(0, W/N)
+    r = config.backend.random_uniform(0, W/N)
 
-    new_indices = np.zeros(N, dtype=int)
+    new_indices = config.backend.zeros(N, dtype=config.int_type)
 
     # pointer for searching in c
     i = 0
@@ -574,13 +612,13 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
     # Step 1: Gather weights globally
     all_weights = None
     if rank == 0:
-        all_weights = np.empty(total_n, dtype=config.complex_type)
+        all_weights = config.backend.empty(total_n, dtype=config.complex_type)
     comm.Gather(walkers_weights, all_weights, root=0)
 
     # Step 2: Normalize weights and determine global instances (rank 0 only)
     instances = None
     if rank == 0:
-        norm_factor = total_n / np.sum(all_weights.real)
+        norm_factor = total_n / config.backend.sum(all_weights.real)
         norm_weights = all_weights.real * norm_factor
 
         # Random bias (shift)
@@ -588,23 +626,23 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
 
 
         # Determine how many copies (instances) each walker has after resampling
-        instances = np.zeros(total_n, dtype=int)
+        instances = config.backend.zeros(total_n, dtype=config.int_type)     ########int is required not float
         cumulative_sum = bias
         previous = 0
         for i in range(total_n):
             cumulative_sum += norm_weights[i]
-            current = int(np.ceil(cumulative_sum))
+            current = int(config.backend.ceil(cumulative_sum))
             instances[i] = current - previous
             previous = current
 
     # Step 3: Broadcast instances to all ranks
     if rank != 0:
-        instances = np.empty(total_n, dtype=int)
+        instances = config.backend.empty(total_n, dtype=config.int_type)     ########int
     comm.Bcast(instances, root=0)
 
     # Step 4: Determine global mapping of walkers after rebalancing
-    new_total_walkers = np.sum(instances)
-    map_indices = np.empty(new_total_walkers, dtype=int)
+    new_total_walkers = config.backend.sum(instances)
+    map_indices = config.backend.empty(new_total_walkers, dtype=config.int_type)     ######int
     count = 0
     for idx, num_instances in enumerate(instances):
         for _ in range(num_instances):
@@ -618,7 +656,7 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
     # Gather all walkers to rank 0 first
     all_mats_up = None
     if rank == 0:
-        all_mats_up = np.empty((total_n, N_orb, N_elec), dtype=config.complex_type)
+        all_mats_up = config.backend.empty((total_n, N_orb, N_elec), dtype=config.complex_type)
     comm.Gather(walkers_mats_up, all_mats_up, root=0)
 
     # Rearrange walkers according to the resampled indices
@@ -627,11 +665,11 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
         resampled_mats_up = all_mats_up[map_indices]
 
     # Scatter evenly back to ranks
-    new_mats_up = np.empty((local_n, N_orb, N_elec), dtype=config.complex_type)
+    new_mats_up = config.backend.empty((local_n, N_orb, N_elec), dtype=config.complex_type)
     comm.Scatter(resampled_mats_up, new_mats_up, root=0)
 
     # Step 6: Reset weights uniformly
-    new_weights = np.ones(local_n, dtype=config.complex_type)
+    new_weights = config.backend.ones(local_n, dtype=config.complex_type)
 
     return new_mats_up, new_weights
 
@@ -740,11 +778,11 @@ def reortho_qr(walker_matrix, config):
     Q, R = config.backend.linalg.qr(walker_matrix)
     return Q
 
-def init_walkers_weights(n_walkers):
+def init_walkers_weights(n_walkers, config):
     '''
     It initializes the weights.
     '''
-    return np.ones(n_walkers, dtype=np.complex64)
+    return config.backend.ones(n_walkers, dtype=config.complex_type)
 
 
 def blockAverage(datastream, block_divisor):
