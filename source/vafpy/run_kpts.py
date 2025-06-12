@@ -81,7 +81,7 @@ def main():
     #h1_half_exp = -D_TAU*expm(h1/2)
     #### H2
     #H2 = np.array(read_datafile(input_file_two_body_hamil),dtype=np.complex128)
-    #h2 = H2#np.moveaxis(H2, 0, -1) 
+    #h2 = H2#np.moveaxis(H2, 0, -1)
     #hamil.two_body = h2
     ##### H2 dager
     #h2_t = np.einsum('prG->rpG', hamil.two_body.conj())
@@ -235,13 +235,13 @@ def main():
     ##print("alpha_full_t: Memory size of numpy array in bytes:",ALPHA_FULL_T.size * ALPHA_FULL_T.itemsize/1e09)
     ##energy = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,hamil.two_body,h2_t,ql,m_q,ALPHA_FULL,ALPHA_FULL_T,comm)
     #energy_time_st = time()
-    ##one_body_energy = E_one(PSI_T_up, walkers.weights, walkers.mats_up, hamil.one_body)/num_k 
+    ##one_body_energy = E_one(PSI_T_up, walkers.weights, walkers.mats_up, hamil.one_body)/num_k
     ##hartree = Hartree(PSI_T_up, walkers.weights, walkers.mats_up)/num_k
     ##exchange = (Exchange(PSI_T_up, walkers.weights, walkers.mats_up)/num_k)
-    ##energy = energy_new 
+    ##energy = energy_new
     #a = measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,0)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
     #energy = energy_new = a[0]
-    #one_body_energy = E_one(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body) 
+    #one_body_energy = E_one(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)
     #hartree = Hartree(PSI_T_up,walkers.weights,walkers.mats_up)
     #exchange = Exchange(PSI_T_up,walkers.weights,walkers.mats_up)
     #E1_vasp = EBANDS - 2 * hartree - 2* exchange
@@ -257,7 +257,7 @@ def main():
     ##energy_test = measure_E_gs_new(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)#,alp,alp_t)#,comm)
     ##print('energy test time = ', time()-t1)
     #
-    ##energy = 19.95523419043512*num_k+2*num_electrons_up*num_electrons_up*num_k*fsg*num_k 
+    ##energy = 19.95523419043512*num_k+2*num_electrons_up*num_electrons_up*num_k*fsg*num_k
     #if first_cpu:
     #    print('H1 Energy from AFQMC = ', one_body_energy)
     #    print('H1 Energy from Vasp  = ', E1_vasp)
@@ -330,9 +330,12 @@ def main():
 #    update_method = set_update_method(afqmc.UPDATE_METHOD)
 
 
-    max_seed = np.iinfo(np.int32).max
-    seed = np.random.randint(max_seed)
-    rank = afqmc.comm.Get_rank()
+    if afqmc.seed is None:
+        max_seed = np.iinfo(np.int32).max
+        seed = np.random.randint(max_seed)
+    else:
+        seed = afqmc.seed
+    #rank = afqmc.comm.Get_rank()
     #seed = 12000
     #base_seed = 12345
     #seed = base_seed + 9999 * rank
@@ -388,11 +391,11 @@ def main():
         old_walkers = walkers
         if j % 10 == 0:
             print("slater_det", walkers.slater_det.shape, walkers.slater_det.dtype, walkers.slater_det.__class__)
-            print("weights", walkers.weights.shape, walkers.weights.dtype, walkers.weights.__class__, flush=True)   
+            print("weights", walkers.weights.shape, walkers.weights.dtype, walkers.weights.__class__, flush=True)
         #a=  measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,0)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
         #energy_new= a[0]
         #print('energy before update', energy_new)
-        
+
         new_walkers, num_rare_event =new.propagate_walkers(config, trial_det, walkers, hamiltonian, h0, energy_new)
         walkers= new_walkers
         avg_weight = np.mean(walkers.weights)
@@ -436,12 +439,12 @@ def main():
                 file_out.write(txt)
                 print()
         if True: #abs(energy.imag)<abs(trsh_imag) and abs(energy.real-e_hf.real)<abs(trsh_real): #ratio*(energy.real+en_const))):# and (abs((energy.real-e_hf.real)/(en_const+e_hf.real))<MAX_ACC_VAL):
-     
+
             if j%afqmc.REORTHO_PERIODICITY == 0:
                 #for i in range (0, NUM_WALKERS):
                 walkers.slater_det = new.reortho_qr(walkers.slater_det, config)
                 #print('NUM_WALKERS = ', NUM_WALKERS)
-            if afqmc.REBAL_PERIODICITY!=0 and j%afqmc.REBAL_PERIODICITY==0: 
+            if afqmc.REBAL_PERIODICITY!=0 and j%afqmc.REBAL_PERIODICITY==0:
                 #print("Rebalencing", flush = True )
                 comm = MPI.COMM_WORLD
                 walkers.slater_det, walkers.weights = new.rebalance_global(comm, walkers.slater_det, walkers.weights, config)       ######global rebalencing by gathering slater amd weights on rank 0
@@ -451,7 +454,7 @@ def main():
                 #walkers.weights = init_walkers_weights(NUM_WALKERS)
             j+=1
         else:
-            if afqmc.first_cpu: 
+            if afqmc.first_cpu:
                 print('RRRRRR        A        RRRRRR   EEEEEE    EEEEEE V           V  EEEEEE  N     N  TTTTTTTTT')
                 print('R    R       A A       R    R   E         E       V         V   E       NN    N      T')
                 print('RRRRRR      A   A      RRRRRR   E         E        V       V    E       N N   N      T')
@@ -466,7 +469,7 @@ def main():
             rebalanced_weights_indices = rebalance_comb(walkers.weights)
             walkers.slater_det = walkers.slater_det[rebalanced_weights_indices]
             walkers.weights = init_walkers_weights(NUM_WALKERS)
-     
+
            #rebalanced_weights_indices = rebalance_comb(walkers.weights)
            # walkers.mats_up = walkers.mats_up[rebalanced_weights_indices]
            # walkers.weights = init_walkers_weights(NUM_WALKERS)
