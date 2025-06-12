@@ -418,11 +418,9 @@ class Hamiltonian:
     def compute_mean_field_one_body(self, config, trial_det, ql):
         # interface to legacy code
         h2_t = np.einsum('prG->rpG', self.two_body.conj())
-        change = 1j*np.zeros_like(self.one_body)
-        num_orb = config.num_orbital
         avg_A_vec_Q = avg_A_Q(trial_det,trial_det,self.two_body,ql,1,config.num_orbital,config.num_electron, config)
         avg_A_vec_Q_dagger = avg_A_Q(trial_det,trial_det,h2_t,ql,1,config.num_orbital,config.num_electron, config)
-        change[:,:] = contract('rpG->rp',contract('G,rpG->rpG',avg_A_vec_Q_dagger,self.two_body[:,:,:])+contract('G,rpG->rpG',avg_A_vec_Q,h2_t[:,:,:]))
+        change = contract('G,rpG->rp',avg_A_vec_Q_dagger,self.two_body[:,:,:]) + contract('G,rpG->rp',avg_A_vec_Q,h2_t[:,:,:])
 
         return config.backend.array(change/2, dtype=config.complex_type)
 
