@@ -416,11 +416,11 @@ class Hamiltonian:
             return self.test_random_field
 
     def compute_mean_field_one_body(self, config, trial_det, ql):
-        alpha = contract('pi,prG->irG', trial_det, self.two_body)
-        avg_A_vec_Q = contract('irG,ri->G', alpha, trial_det)
-        alpha = contract('pi,rpG->irG', trial_det, self.two_body.conj())
-        avg_A_vec_Q_dagger = contract('irG,ri->G', alpha, trial_det)
-        change = contract('G,rpG->rp',avg_A_vec_Q_dagger,self.two_body) + contract('G,prG->rp',avg_A_vec_Q,self.two_body.conj())
+        # <Psi_T|L_g|Psi_T>
+        L_g = contract("pi, prg, ri -> g", trial_det, self.two_body, trial_det)
+        L_g_t = contract("pi, rpg, ri -> g", trial_det, self.two_body.conj(), trial_det)
+        assert np.allclose(L_g, L_g_t.conj())
+        change = contract('G,rpG->rp', L_g_t, self.two_body) + contract('G,prG->rp', L_g, self.two_body.conj())
 
         return config.backend.array(change, dtype=config.complex_type)
 
