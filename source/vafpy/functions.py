@@ -418,11 +418,18 @@ class Hamiltonian:
     def compute_mean_field_one_body(self, config, trial_det, ql):
         # interface to legacy code
         h2_t = np.einsum('prG->rpG', self.two_body.conj())
-#        avg_A_vec_Q = avg_A_Q(trial_det,trial_det,self.two_body,ql,1,config.num_orbital,config.num_electron, config)
         num_orb = config.num_orbital
         alpha = get_alpha_k1_k2(trial_det,self.two_body,1,1,num_orb, config)
         avg_A_vec_Q = 2 * contract('irG,ri->G',alpha,trial_det)
-        avg_A_vec_Q_dagger = avg_A_Q(trial_det,trial_det,h2_t,ql,1,config.num_orbital,config.num_electron, config)
+        #avg_A_vec_Q_dagger = avg_A_Q(trial_det,trial_det,h2_t,ql,1,config.num_orbital,config.num_electron, config)
+        K1s_K2s = get_k1s_k2s(ql,1)
+        theta_full = theta(trial_det, trial_det)
+        h2_shape = h2_t.shape[2]
+        result = 1j*config.backend.zeros(h2_shape)
+        for K1,K2 in K1s_K2s:
+            alpha = get_alpha_k1_k2(trial_det,h2_t,K1,K2,num_orb, config)
+            result += contract('iiG->G',contract('nrG,rm->nmG',alpha,theta_full[(K2-1)*num_orb:K2*num_orb,(K1-1)*config.num_electron:K1*config.num_electron]))
+        avg_A_vec_Q_dagger = 2*result
         change = contract('G,rpG->rp',avg_A_vec_Q_dagger,self.two_body[:,:,:]) + contract('G,rpG->rp',avg_A_vec_Q,h2_t[:,:,:])
 
         return config.backend.array(change/2, dtype=config.complex_type)
