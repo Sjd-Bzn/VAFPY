@@ -420,14 +420,8 @@ class Hamiltonian:
         h2_t = np.einsum('prG->rpG', self.two_body.conj())
 #        avg_A_vec_Q = avg_A_Q(trial_det,trial_det,self.two_body,ql,1,config.num_orbital,config.num_electron, config)
         num_orb = config.num_orbital
-        K1s_K2s = get_k1s_k2s(ql,1)
-        theta_full = theta(trial_det, trial_det)
-        h2_shape = self.two_body.shape[2]
-        result = 1j*config.backend.zeros(h2_shape)
-        #result = 1j*cp.zeros(h2_shape)
         alpha = get_alpha_k1_k2(trial_det,self.two_body,1,1,num_orb, config)
-        result += contract('iiG->G',contract('nrG,rm->nmG',alpha,trial_det))
-        avg_A_vec_Q = result * 2
+        avg_A_vec_Q = 2 * contract('irG,ri->G',alpha,trial_det)
         avg_A_vec_Q_dagger = avg_A_Q(trial_det,trial_det,h2_t,ql,1,config.num_orbital,config.num_electron, config)
         change = contract('G,rpG->rp',avg_A_vec_Q_dagger,self.two_body[:,:,:]) + contract('G,rpG->rp',avg_A_vec_Q,h2_t[:,:,:])
 
