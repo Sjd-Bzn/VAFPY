@@ -217,7 +217,7 @@ class JaxBackend(Backend):
         self._key = jax.random.key(seed)
         #self.expm = jax.scipy.linalg.expm
 
-    
+
     def block_diag(self, *matrices):
         matrix_copy = [np.asarray(matrix) for matrix in matrices]
         matrix = scipy.linalg.block_diag(*matrix_copy)
@@ -244,13 +244,13 @@ class NumpyBackend(Backend):
         self.expm = scipy.linalg.expm
         self._generator_1 = np.random.default_rng(seed)
         #self._generator_2 = np.random.default_rng(seed)
-         
+
     def random_normal(self, shape, dtype):
         #a = self._generator_1.standard_normal(shape, dtype)
         #b = self._generator_2.standard_normal(shape, dtype)
         #print(np.allclose(a, b))
         return self._generator_1.standard_normal(shape).astype(dtype)
-    
+
     def random_uniform(self, shape, dtype):
         return self._generator_1.uniform(size=shape).astype(dtype)
 
@@ -290,7 +290,7 @@ class Configuration:
     comm: MPI.Comm  # communicator over which the walkers are distributed
     precision: str  # must be either single or double
     backend: types.ModuleType  # module used to execute numpy-like operations
-    
+
     @property
     def float_type(self):
         if self.precision == "Single":
@@ -416,11 +416,13 @@ class Hamiltonian:
             return self.test_random_field
 
     def compute_mean_field_one_body(self, config, trial_det, ql):
-        # interface to legacy code
-        h2_t = np.einsum('prG->rpG', self.two_body.conj())
-        h1_legacy = H_1_mf(trial_det,trial_det,self.two_body,h2_t,ql,self.one_body,config.num_kpoint,config.num_orbital,config.num_electron, config)
-        result = h1_legacy - self.one_body
-        return config.backend.array(result, dtype=config.complex_type)
+        even = 0.5 * (self.two_body + contract("pqg -> qpg", self.two_body.conj()))
+        odd = 0.5j * (self.two_body - contract("pqg -> qpg", self.two_body.conj()))
+        L_op = np.concatenate((even, odd), axis=-1)
+        # <Psi_T|L_g|Psi_T> ^L_g
+        L_mf = contract("pi, pqg, qi -> g", trial_det, L_op, trial_det)
+        h_mf = 2 * contract("g, pqg -> pq", L_mf, L_op)
+        return config.backend.array(h_mf, dtype=config.complex_type)
 
     def compute_mean_field_two_body(self, config, trial_det, ql):
         # interface to legacy code
@@ -430,7 +432,7 @@ class Hamiltonian:
         result = np.concatenate((two_body_e, two_body_o), axis=-1)
         return config.backend.array(result, dtype=config.complex_type)
 
-    
+
     def exp_h0( config, theta):
         a =  2 * compute_hartreei( theta) / (2*config.num_electron)
         print("a",a)
@@ -526,12 +528,12 @@ def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0):
 
     elif config.propagator == "S2":
         half_step_with_h1 = hamiltonian.exp_h1_half @ walkers.slater_det
-        #print("half_step_with_h1" ,half_step_with_h1.shape) 
+        #print("half_step_with_h1" ,half_step_with_h1.shape)
         full_step_with_h2 = apply_taylor(config, h2, half_step_with_h1)
         half_step_with_h1 = hamiltonian.exp_h1_half @ full_step_with_h2
-        new_walkers.slater_det = half_step_with_h1 * h_0 
+        new_walkers.slater_det = half_step_with_h1 * h_0
         #print("walker", half_step_with_h1.shape)
-        #print("h0", hamiltonian.exp_h0.shape)  
+        #print("h0", hamiltonian.exp_h0.shape)
     else:
         raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
 
@@ -622,7 +624,7 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
         norm_weights = all_weights.real * norm_factor
 
         # Random bias (shift)
-        bias = -config.backend.random_uniform((), config.float_type)  
+        bias = -config.backend.random_uniform((), config.float_type)
 
 
         # Determine how many copies (instances) each walker has after resampling
