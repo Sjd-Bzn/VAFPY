@@ -369,6 +369,9 @@ def main():
         one_body=new.obtain_H1(config),
         two_body=new.obtain_H2(config),
     )
+    print("H1",hamiltonian.one_body.shape)
+    print("H2",hamiltonian.two_body.shape)
+    exit()
     trial_det, walkers = new.initialize_determinant(config)
     hamiltonian.setup_energy_expressions(config, trial_det)
 

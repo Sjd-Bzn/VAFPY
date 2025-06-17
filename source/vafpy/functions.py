@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import types
 from time import time
 import numpy as np
-import cupy as cp
+#import cupy as cp
 import jax
 import jax.numpy as jnp
 import scipy
@@ -170,6 +170,7 @@ def main(precision, backend):
         one_body=obtain_H1(config),
         two_body=obtain_H2(config),
     )
+    exit()
     trial_det, walkers = initialize_determinant(config)
     hamiltonian.setup_energy_expressions(config, trial_det)
 
@@ -460,13 +461,54 @@ def obtain_H1(config):
     """
     input_h1 = config.backend.load("H1.npy").astype(config.complex_type)
     output_h1 = config.backend.moveaxis(input_h1, -1, 0)
-    return config.backend.block_diag(*output_h1)
+    #####    block diagonal H1 (inefficient off diagonal zero nk times)
+    #return config.backend.block_diag(*output_h1)
+    ####    H1 (nk,nb,nb)
+    return output_h1
 
+#def obtain_H2(config):
+#    input_h2 = config.backend.load("H2_zip.npy").astype(config.complex_type)
+#    return input_h2
 
 def obtain_H2(config):
-    input_h2 = config.backend.load("H2_zip.npy").astype(config.complex_type)
-    return input_h2
+    """
+    Reshape  H2 into
+        L[q, k2, n2, n1, g]   with momentum conservation built-in.
+    """
+    cb = config.backend                       
+    cct = config.complex_type
 
+    # --- constants from your config  ---------------------------------
+    nk  = config.num_kpoint         
+    nb  = config.num_orbital     
+    ng = config.num_g           
+    # -----------------------------------------------------------------
+
+    two_body = cb.load("H2_zip.npy").astype(cct)
+    n1nk, n2nk, ng = two_body.shape
+    
+    nb1 = n1nk // nk
+    nb2 = n2nk // nk
+    # reshape (k1, n1, k2, n2, g)
+    two_body = two_body.reshape(nk, nb1, nk, nb2, ng)
+
+    # transpose to (k1, k2, n2, n1, g)
+    two_body = two_body.transpose(0, 2, 3, 1, 4)
+
+    # load k1_list 
+    k1_list = cb.load("k1_list.npy")          # shape (q, k2)
+
+    L = cb.empty((nk, nk, nb, nb, ng), dtype=cct)
+
+    # momentum-conserving pick
+    for q in range(nk):
+        for k2 in range(nk):
+            k1  = int(k1_list[q, k2]) -1
+            L[q, k2] = two_body[k1, k2] 
+    print("L", L.shape)
+
+    return L
+          
 def initialize_determinant(config):
     shape = (config.num_orbital, config.num_electron)
     trial_det = config.backend.eye(*shape, dtype=config.float_type)
