@@ -489,7 +489,7 @@ def obtain_H2(config):
      # -----------------------------------------------------------------
  
     two_body = cb.load("H2_svd.npy").astype(cct)
-    two_body=np.moveaxis(two_body, 0, -1)
+    two_body=cb.moveaxis(two_body, 0, -1)
     print("tw body", two_body.shape)
     nb1, n2nk, nkg = two_body.shape
 
