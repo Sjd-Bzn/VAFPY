@@ -365,12 +365,20 @@ def main():
         precision=afqmc.Precsion,
         backend=backend,
     )
+    L_list = new.svd_list(config)
+    L_max_g = new.svd_g_max(config)
+
     hamiltonian = new.Hamiltonian(
         one_body=new.obtain_H1(config),
-        two_body=new.obtain_H2(config),
+        two_body=L_list,
     )
     print("H1",hamiltonian.one_body.shape)
-    print("H2",hamiltonian.two_body.shape)
+  #  print("H2",hamiltonian.two_body.shape)
+    for q, L_q in enumerate(L_list):
+        print(f"  q = {q}, shape = {L_q.shape}")
+    print("L_padded shape:", L_max_g.shape)  # should be (nk, nk, nb, nb, g_max)
+    #print("Ranks per q:", rank)
+
     exit()
     trial_det, walkers = new.initialize_determinant(config)
     hamiltonian.setup_energy_expressions(config, trial_det)
