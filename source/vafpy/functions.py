@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import types
 from time import time
 import numpy as np
-import cupy as cp
+#import cupy as cp
 import jax
 import jax.numpy as jnp
 import scipy
