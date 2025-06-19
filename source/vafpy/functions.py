@@ -481,36 +481,40 @@ def obtain_H2(config):
     # --- constants from your config  ---------------------------------
     nk  = config.num_kpoint         
     nb  = config.num_orbital     
-    ng = config.num_g           
-    # -----------------------------------------------------------------
-
-    two_body = cb.load("H2_zip.npy").astype(cct)
-    n1nk, n2nk, ng = two_body.shape
-    
-    nb1 = n1nk // nk
-    nb2 = n2nk // nk
-    # reshape (k1, n1, k2, n2, g)
-    two_body = two_body.reshape(nk, nb1, nk, nb2, ng)
-
-    # transpose to (k1, k2, n2, n1, g)
-    two_body = two_body.transpose(0, 2, 3, 1, 4)
-
+    g = config.num_g           
     # load k1_list 
-    k1_list = cb.load("k1_list.npy")          # shape (q, k2)
+    #k1_list = cb.load("k1_list.npy")          # shape (q, k2)
+    #q = k1_list[0]
 
-    L = cb.empty((nk, nk, nb, nb, ng), dtype=cct)
+     # -----------------------------------------------------------------
+ 
+    two_body = cb.load("H2_svd.npy").astype(cct)
+    two_body=np.moveaxis(two_body, 0, -1)
+    print("tw body", two_body.shape)
+    nb1, n2nk, nkg = two_body.shape
+
+    nb2 = n2nk // nk
+    g = nkg // nk
+    # reshape (k2, nb2, n1, q, g)
+    L = two_body.reshape(nk, nb2, nb1, nk, g)
+
+    # transpose to (q, nk, nb2, nb1, g)
+    L = L.transpose(3, 0, 1, 2, 4)
+
+    
+    #L = cb.empty((nk, q, nb, nb, ), dtype=cct)
 
     # momentum-conserving pick
-    for q in range(nk):
-        for k2 in range(nk):
-            k1  = int(k1_list[q, k2]) -1
-            L[q, k2] = two_body[k1, k2] 
+   # #for q in range(nk):
+   #     for k2 in range(nk):
+   #         k1  = int(k1_list[q, k2]) -1
+   #         L[q, k2] = two_body[k1, k2] 
     print("L", L.shape)
 
     return L
           
 def initialize_determinant(config):
-    shape = (config.num_orbital, config.num_electron)
+    shape = (config.num_kpoint, config.num_kpoint, config.num_orbital, config.num_electron)
     trial_det = config.backend.eye(*shape, dtype=config.float_type)
     slater_det = config.backend.array(config.num_walkers * [trial_det])
     walkers = Walkers(
