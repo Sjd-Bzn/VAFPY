@@ -475,19 +475,19 @@ def obtain_H2(config):
     Reshape  H2 into
         L[q, k2, n2, n1, g]   with momentum conservation built-in.
     """
-    cb = config.backend                       
+    cb = config.backend
     cct = config.complex_type
 
     # --- constants from your config  ---------------------------------
-    nk  = config.num_kpoint         
-    nb  = config.num_orbital     
-    g = config.num_g           
-    # load k1_list 
+    nk  = config.num_kpoint
+    nb  = config.num_orbital
+    g = config.num_g
+    # load k1_list
     #k1_list = cb.load("k1_list.npy")          # shape (q, k2)
     #q = k1_list[0]
 
      # -----------------------------------------------------------------
- 
+
     two_body = cb.load("H2_svd.npy").astype(cct)
     two_body=cb.moveaxis(two_body, 0, -1)
     print("tw body", two_body.shape)
@@ -501,135 +501,90 @@ def obtain_H2(config):
     # transpose to (q, nk, nb2, nb1, g)
     L = L.transpose(3, 0, 1, 2, 4)
 
-    
+
     #L = cb.empty((nk, q, nb, nb, ), dtype=cct)
 
     # momentum-conserving pick
    # #for q in range(nk):
    #     for k2 in range(nk):
    #         k1  = int(k1_list[q, k2]) -1
-   #         L[q, k2] = two_body[k1, k2] 
+   #         L[q, k2] = two_body[k1, k2]
     print("L", L.shape)
 
     return L
 
 
-def svd_list(config, threshold=1e-2):
-    """
-    1:Reshape  H2 into
-        L[q, k2, n2, n1, g]   with momentum conservation built-in.
-    """
-
-    """
-     2: compress with svd (cmpress g for each specific q)
-    Return: list_L  length nk, where list_L[q] has shape (nk, n2, n1, g_q)
-    """
-
-    cb = config.backend
-    cct = config.complex_type
-
-    # --- constants from your config  ---------------------------------
-    nk  = config.num_kpoint
-    nb  = config.num_orbital
-    g = config.num_g
-    # load k1_list 
-    #k1_list = cb.load("k1_list.npy")          # shape (q, k2)
-    #q = k1_list[0]
-
-     # -----------------------------------------------------------------
-
-    two_body = cb.load("H2_svd.npy").astype(cct)
-    two_body=cb.moveaxis(two_body, 0, -1)
-    print("tw body", two_body.shape)
-    nb1, n2nk, nkg = two_body.shape
-
-    nb2 = n2nk // nk
-    g = nkg // nk
-    # reshape (k2, nb2, n1, q, g)
-    L = two_body.reshape(nk, nb2, nb1, nk, g)
-
-    # transpose to (q, nk, nb2, nb1, g)
-    L = L.transpose(3, 0, 1, 2, 4)
-
-
-    print("L", L.shape)
-
-    nk, _, n2, n1, g_full = L.shape
-    list_L = []
-    for q in range(nk):
-        L_q = L[q]                              # (k2, n2, n1, g_full)
-        mat   = L_q.reshape(-1, g_full)         # 2-D  (nk*n2*n1, g_full)
-        U, S, _ = cb.linalg.svd(mat, full_matrices=False)
-        keep = S > threshold * S[0]             
-        n_g  = int(cb.sum(keep))           ### count_nonzero doeaasnt work for JAX
-        mat_red = (U[:, keep] * S[keep])        
-        L_q_red = mat_red.reshape(nk, n2, n1, n_g)
-        list_L.append(L_q_red)
-    return list_L        # list length q
 
 def svd_g_max(config, threshold=1e-2):
     """
-    load H2 and svd for each q then get same shape as the max_g for all q 
+    load H2 and svd for each q then get same shape as the max_g for all q
     """
     cb = config.backend
-    cct = config.complex_type
 
-    # --- constants from your config  ---------------------------------
-    nk  = config.num_kpoint
-    nb  = config.num_orbital
-    g = config.num_g
-    # load k1_list 
-    #k1_list = cb.load("k1_list.npy")          # shape (q, k2)
-    #q = k1_list[0]
+    list_L = svd_list(config, threshold)
+    nq = len(list_L)
+    nk, nb2, nb1, _ = list_L[0].shape
+    ng_max = max(L_q.shape[-1] for L_q in list_L)
 
-     # -----------------------------------------------------------------
+    L_pad = cb.zeros((nq, nk, nb2, nb1, ng_max), dtype=list_L[0].dtype)
+    for q, L_q in enumerate(list_L):
+        ng = L_q.shape[-1]
+        L_pad[q, :, :, :, :ng] = L_q
 
-    two_body = cb.load("H2_svd.npy").astype(cct)
-    two_body=cb.moveaxis(two_body, 0, -1)
-    print("tw body", two_body.shape)
-    nb1, n2nk, nkg = two_body.shape
-
-    nb2 = n2nk // nk
-    g = nkg // nk
-    # reshape (k2, nb2, n1, q, g)
-    L = two_body.reshape(nk, nb2, nb1, nk, g)
-
-    # transpose to (q, nk, nb2, nb1, g)
-    L = L.transpose(3, 0, 1, 2, 4)
+    return L_pad
 
 
-    #L = cb.empty((nk, q, nb, nb, ), dtype=cct)
+def svd_list(config, threshold=1e-2):
+    """
+    compress with svd (cmpress g for each specific q)
+    Return: list_L  length nk, where list_L[q] has shape (nk, n2, n1, g_q)
+    """
+    cb = config.backend
 
-    # momentum-conserving pick
-   # #for q in range(nk):
-   #     for k2 in range(nk):
-   #         k1  = int(k1_list[q, k2]) -1
-   #         L[q, k2] = two_body[k1, k2] 
+    L = load_and_reshape_two_body(config)
     print("L", L.shape)
 
-
-
-    nk, _, n2, n1, g_full = L.shape
-    ranks = []
-    L_red_blocks = []
-    for q in range(nk):
-        mat = L[q].reshape(-1, g_full)
+    nq, nk, n2, n1, g_full = L.shape
+    list_L = []
+    for q in range(nq):
+        L_q = L[q]                              # (k2, n2, n1, g_full)
+        mat   = L_q.reshape(-1, g_full)         # 2-D  (nk*n2*n1, g_full)
         U, S, _ = cb.linalg.svd(mat, full_matrices=False)
         keep = S > threshold * S[0]
-        rank_q = int(cb.sum(keep))
-        ranks.append(rank_q)
-        L_red_blocks.append((U[:, keep] * S[keep]))   
-    g_max = max(ranks)
-    L_pad = cb.zeros((nk, nk, n2, n1, g_max), dtype=L.dtype)
+        n_g  = int(cb.sum(keep))           ### count_nonzero doeaasnt work for JAX
+        mat_red = (U[:, keep] * S[keep])
+        L_q_red = mat_red.reshape(nk, n2, n1, n_g)
+        list_L.append(L_q_red)
+    return list_L  # list length nq
 
-    for q in range(nk):
-        n_g = ranks[q]
-        block = L_red_blocks[q].reshape(nk, n2, n1, n_g)
-        L_pad[q, :, :, :, :n_g] = block
 
-    return L_pad        
+def load_and_reshape_two_body(config):
+    """
+    Reshape  H2 into
+        L[q, k2, n2, n1, g]   with momentum conservation built-in.
+    """
+    # constants from your config
+    cct = config.complex_type
+    cb = config.backend
+    nk = nq = config.num_kpoint
+    nb = config.num_orbital
+    ng = config.num_g
 
-          
+    # input shape is ng x nk, nb, nb x nk
+    two_body = cb.load("H2.npy").astype(cct)
+    nqg, nb1, nb2nk = two_body.shape
+    nb2 = nb2nk // nk
+    # sanity check
+    assert nb1 == nb2 == nb
+    assert nqg // nq == ng
+
+    # reshape (nq, ng, nb1, nk, nb2)
+    L = two_body.reshape(nq, ng, nb1, nk, nb2)
+
+    # transpose to (nq, nk, nb2, nb1, ng)
+    return L.transpose(0, 3, 2, 4, 1)
+
+
 def initialize_determinant(config):
     shape = (config.num_kpoint, config.num_kpoint, config.num_orbital, config.num_electron)
     trial_det = config.backend.eye(*shape, dtype=config.float_type)
