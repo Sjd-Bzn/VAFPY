@@ -1,0 +1,13 @@
+# .gitignore content (located in repository root: ~/sajad/AFQMC/)
+
+# Ignore PDM/Poetry virtual environment directories inside 'source'
+source/.vafpy/
+source/.venv/
+
+# Files generated during the run (from your previous status)
+source/run/*.txt 
+source/run/*.npy
+
+# Python temporary/cache files
+__pycache__/
+*.pyc

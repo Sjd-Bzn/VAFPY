@@ -3,7 +3,7 @@ from mpi4py import MPI
 if MPI.COMM_WORLD.Get_rank() != 0:
     print = lambda *arg, **kwargs: None
 
-from vafpy import input_reader
+import input_reader
 #from vafpy.funcs_kpts import reortho_qr, blockAverage
 #first_cpu = comm.Get_rank()==0
 from time import time
@@ -11,14 +11,8 @@ import sys
 from os.path import exists
 log_file = 'log'
 #sys.stdout = open(log_file, "w")
-import vafpy.functions as new
-#import jax.profiler
-from jax import device_get
-import jax.numpy as jnp
-import cupy as cp
-from jax.tree_util import tree_map
+import functions as new
 
-from opt_einsum import contract, contract_expression
 
 
 afqmc = input_reader.read()
@@ -331,7 +325,7 @@ if afqmc.first_cpu:
     print('AFQMC simulation...')
     print()
 num_rare = 0
-#start_time = time()
+start_time = time()
 
 
 max_seed = np.iinfo(np.int32).max
@@ -348,9 +342,6 @@ if backend == "NumPy":
     backend = new.NumpyBackend(seed)
 elif backend == "JAX":
     backend = new.JaxBackend(seed)
-elif backend == "CuPy":
-    backend = new.CupyBackend(seed)
-
 else:
     raise NotImplementedError(f"Selected {backend=} not implemented!")
 config = new.Configuration(
@@ -373,239 +364,20 @@ hamiltonian = new.Hamiltonian(
 )
 trial_det, walkers = new.initialize_determinant(config)
 hamiltonian.setup_energy_expressions(config, trial_det)
-#
+
 hartree = new.measure_hartree(config, trial_det, walkers, hamiltonian)
-print(f"{hartree.__class__=} {hartree.dtype =}")
-h0= (config.backend.exp(config.timestep*hartree/(2*config.num_electron)))
-print(f"{h0.__class__=} {h0.dtype =}")
-h0 = h0.astype(config.backend.complex64)
-##print(f"{h0.__class__=} {h0.dtype =}")
-##print("h0", h0)
+h0= (np.exp(config.timestep*hartree/(2*config.num_electron)))
+h0 = h0.astype(np.complex64)
+#print("h0", h0)
 a= new.measure_energy(config, trial_det, walkers, hamiltonian)
-energy_new = e_hf = a[0]  
-#e0 = a[3]
-#ex = a[5]
-#har = a[4] 
-#theta = a[6]
-#
-#
-#
-#
-#
-#
-#
-#weights_file = open("weights_history.txt", "w")
-#weights_file.write(f"{0}:   {np.mean(walkers.weights)}\n")
-#rare_event_steps_count = 0   # Number of steps that had at least one rare event
-#rare_event_total_count = 0   # Total number of walker-rare-events across all steps
-print("HF energy", e_hf)
-##tot_auxiliary_time = 0
-#ene = new.setup_energy_expressions(config, trial_det, walkers.slater_det)
-#alp = ene[1]
-#alp_t = ene[2]
-#one = ene[3]
-#two = ene[4]
-#E1 = ene[5]
-##
-##
-###h1_trial = trial_det.T @ one  #contract("pi, pq -> iq", trial_det, one)     #ene[0]
-##
-##
-#obt_one = one#new.obtain_H1(config)
-#h1 = config.backend.load("H1.npy")[:,:,0]
-#trial = config.backend.eye(108, 15)
-#h1_trial = trial.T @ h1
-##print(h1_trial.device)
-##print(obt_one.shape)
-##
-#backend = "NumPy"
-#if backend == "NumPy":
-#    backend = new.NumpyBackend(seed)
-#elif backend == "JAX":
-#    backend = new.JaxBackend(seed)
-#elif backend == "CuPy":
-#    backend = new.CupyBackend(seed)
-#
-#else:
-#    raise NotImplementedError(f"Selected {backend=} not implemented!")
-#config = new.Configuration(
-#    num_walkers=afqmc.NUM_WALKERS,
-#    num_kpoint=afqmc.num_k,
-#    num_orbital=afqmc.num_orb,
-#    num_electron=afqmc.num_electrons_up,
-#    num_g = afqmc.num_g,
-#    singularity=afqmc.fsg,#18.5088416167974,
-#    propagator=afqmc.propagator,
-#    order_propagation=afqmc.order_trunc,
-#    timestep=afqmc.D_TAU,
-#    comm=MPI.COMM_WORLD,
-#    precision=afqmc.Precsion,
-#    backend=backend,
-#)
-#hamiltonian = new.Hamiltonian(
-#    one_body=new.obtain_H1(config),
-#    two_body=new.obtain_H2(config),
-#)
-#trial_det_np, walkers = new.initialize_determinant(config)
-#hamiltonian.setup_energy_expressions(config, trial_det)
-#
-##hartree_np = new.measure_hartree(config, trial_det_np, walkers, hamiltonian)
-##print(f"{hartree_np.__class__=} {hartree_np.dtype =}")
-##h0= (config.backend.exp(config.timestep*hartree/(2*config.num_electron)))
-##print(f"{h0.__class__=} {h0.dtype =}")
-##h0 = h0.astype(config.backend.complex64)
-##print(f"{h0.__class__=} {h0.dtype =}")
-##print("h0", h0)
-#a_np= new.measure_energy(config, trial_det_np, walkers, hamiltonian)
-#energy_new_np = e_hf_np = a_np[0]   
-#e0_np = a_np[3]
-#ex_np = a_np[5]
-#har_np = a_np[4] 
-#theta_np = a_np[6]
-#
-#e0_jtn = np.array(e0)
-#ex_jtn = np.array(ex)
-#har_jtn = np.array(har)
-#theta_jtn = np.array(theta)
-#
-#ene_np = new.setup_energy_expressions(config, trial_det_np, walkers.slater_det)
-#alp_np = ene_np[1]
-#alp_t_np = ene_np[2]
-#one_np = ene_np[3]
-#two_np = ene_np[4]
-#E1_np = ene_np[5]
-#
-#obt_one_np = one_np #new.obtain_H1(config)
-#
-#h1_trial_np = trial_det_np.T @ one_np   #contract("pi, pq -> iq", trial_det_np, one_np) #ene_np[0]
-#
-#
-#
-#h1_trial_jtn = np.array(h1_trial)
-#alp_jtn = np.array(alp)
-#alp_t_jtn = np.array(alp_t)
-#one_jtn = np.array(one)
-#two_jtn = np.array(two)
-#E1_jtn = np.array(E1)
-#trial_det_jtn = np.array(trial_det)
-#obt_one_jtn = np.array(obt_one)
-###backend = "CuPy"
-###if backend == "NumPy":
-###    backend = new.NumpyBackend(seed)
-###elif backend == "JAX":
-###    backend = new.JaxBackend(seed)
-###elif backend == "CuPy":
-###    backend = new.CupyBackend(seed)
-###
-###else:
-###    raise NotImplementedError(f"Selected {backend=} not implemented!")
-###config = new.Configuration(
-###    num_walkers=afqmc.NUM_WALKERS,
-###    num_kpoint=afqmc.num_k,
-###    num_orbital=afqmc.num_orb,
-###    num_electron=afqmc.num_electrons_up,
-###    num_g = afqmc.num_g,
-###    singularity=afqmc.fsg,#18.5088416167974,
-###    propagator=afqmc.propagator,
-###    order_propagation=afqmc.order_trunc,
-###    timestep=afqmc.D_TAU,
-###    comm=MPI.COMM_WORLD,
-###    precision=afqmc.Precsion,
-###    backend=backend,
-###)
-###hamiltonian = new.Hamiltonian(
-###    one_body=new.obtain_H1(config),
-###    two_body=new.obtain_H2(config),
-###)
-###trial_det, walkers = new.initialize_determinant(config)
-###hamiltonian.setup_energy_expressions(config, trial_det)
-###
-###hartree_cu = new.measure_hartree(config, trial_det, walkers, hamiltonian)
-####print(f"{hartree_np.__class__=} {hartree_np.dtype =}")
-####h0= (config.backend.exp(config.timestep*hartree/(2*config.num_electron)))
-####print(f"{h0.__class__=} {h0.dtype =}")
-####h0 = h0.astype(config.backend.complex64)
-####print(f"{h0.__class__=} {h0.dtype =}")
-####print("h0", h0)
-###a_cu= new.measure_energy(config, trial_det, walkers, hamiltonian)
-###energy_new_cu = e_hf_np = a_np[0]   
-###e0_cu = a_cu[3]
-###ex_cu = a_cu[5]
-###har_cu = a_cu[4] 
-###theta_cu = a_cu[6]
-###
-###e0_ctn = e0_cu.get()
-###ex_ctn = ex_cu.get()
-###har_ctn = har_cu.get()
-###theta_ctn = theta_cu.get()
-###
-###ene_cu = new.setup_energy_expressions(config, trial_det, walkers.slater_det)
-###h1_trial_cu = ene_cu[0]
-###alp_cu = ene_cu[1]
-###alp_t_cu = ene_cu[2]
-###one_cu = ene_cu[3]
-###two_cu = ene_cu[4]
-###E1_cu = ene_cu[5]
-###
-###h1_trial_ctn = h1_trial_cu.get()
-###alp_ctn = alp_cu.get()
-###alp_t_ctn = alp_t_cu.get()
-###one_ctn = one_cu.get()
-###two_ctn = two_cu.get()
-###E1_ctn = E1_cu.get()
-##
-##
-###print()
-##
-##print(np.allclose(e0_np, e0_jtn))
-##print(np.allclose(ex_np, ex_jtn))
-##print(np.allclose(har_np, har_jtn))
-##print(np.allclose(theta_np, theta_jtn))
-#print(f"{np.allclose(theta_np, theta_jtn, atol=1e-4)}, {np.max(np.abs(theta_np - theta_jtn))}, {np.mean(np.abs(theta_np - theta_jtn))}")
-#print(f"{np.allclose(h1_trial_np, h1_trial_jtn, atol=1e-4)}, {np.max(np.abs(h1_trial_np - h1_trial_jtn))}, {np.mean(np.abs(h1_trial_np - h1_trial_jtn))}")
-#print(f"{np.allclose(alp_np, alp_jtn, atol = 1e-4)}, {np.max(np.abs(alp_np - alp_jtn ))}, {np.mean(np.abs(alp_np - alp_jtn))}")
-#print(f"{np.allclose(obt_one_np, obt_one_jtn, atol=1e-4)}, {np.max(np.abs(obt_one_np - obt_one_jtn))}, {np.mean(np.abs(obt_one_np - obt_one_jtn))}")
-#print(f"{np.allclose(one_np, one_jtn, atol=1e-4)}, {np.max(np.abs(one_np - one_jtn))}, {np.mean(np.abs(one_np - one_jtn))}")
-#print(f"{np.allclose(alp_t_np, alp_t_jtn, atol = 1e-4)}, {np.max(np.abs(alp_t_np - alp_t_jtn))}, {np.mean(np.abs(alp_t_np - alp_t_jtn))}")
-#print(f"{np.allclose(E1_np, E1_jtn, atol = 1e-4)}, {np.max(np.abs(E1_np - E1_jtn))}, {(np.abs(E1_np - E1_jtn))}")
-###print(f"{np.allclose(theta_np, theta_ctn, atol=1e-4)}, {np.max(np.abs(theta_np - theta_ctn))}, {np.mean(np.abs(theta_np - theta_ctn))}")
-###print(f"{np.allclose(h1_trial_np, h1_trial_ctn, atol=1e-4)}, {np.max(np.abs(h1_trial_np - h1_trial_ctn))}, {np.mean(np.abs(h1_trial_np - h1_trial_ctn))}")
-####print(f"{np.allclose(alp_np, alp_ctn, atol = 1e-4)}, {np.max(np.abs(alp_np - alp_ctn ))}, {np.mean(np.abs(alp_np - alp_ctn))}")
-####print(f"{np.allclose(alp_t_np, alp_t_ctn, atol = 1e-4)}, {np.max(np.abs(alp_t_np - alp_t_ctn))}, {np.mean(np.abs(alp_t_np - alp_t_ctn))}")
-####print(f"{np.allclose(E1_np, E1_ctn, atol = 1e-4)}, {np.max(np.abs(E1_np - E1_ctn))}, {(np.abs(E1_np - E1_ctn))}")
-###
-###
-#print(np.array_equal(e0_np, e0_jtn))
-#print(np.array_equal(ex_np, ex_jtn))
-#print(np.array_equal(har_np, har_jtn))
-#print(np.array_equal(theta_np, theta_jtn))
-##print(np.array_equal(theta_np, theta_ctn))
-#print(np.array_equal(h1_trial_np, h1_trial_jtn))
-#print(np.array_equal(obt_one_np, obt_one_jtn))
-##
-###print(np.array_equal(alp_np, alp_jtn))
-###print(np.array_equal(alp_t_np, alp_t_jtn))
-#print(np.array_equal(one_np, one_jtn))
-#print(np.array_equal(two_np, two_jtn))
-#print(np.array_equal(trial_det_np, trial_det_jtn))
-##
-##
-##
-##
+energy_new = e_hf = a[0]   
 weights_file = open("weights_history.txt", "w")
 weights_file.write(f"{0}:   {np.mean(walkers.weights)}\n")
 rare_event_steps_count = 0   # Number of steps that had at least one rare event
 rare_event_total_count = 0   # Total number of walker-rare-events across all steps
-###print("HF energy numpy", e_hf_np)
-#
-#exit()
-t_prop = 0
-t_energy = 0
-t_qr = 0
+print("HF energy", e_hf)
+#tot_auxiliary_time = 0
 NUM_WALKERS = afqmc.NUM_WALKERS
-_ = cp.linalg.qr(cp.eye(2))
-
-start_time = time()
 while (j<afqmc.NUM_STEPS+1):
     update_time_st=time()
     #walkers.mats_up,walkers.weights = update_walker(PSI_T_up_0,PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,0,update_method)
@@ -614,18 +386,10 @@ while (j<afqmc.NUM_STEPS+1):
     #a=  measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,0)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
     #energy_new= a[0]
     #print('energy before update', energy_new)
-    t_prop_s = time() 
-    new_walkers,  num_rare_event =new.propagate_walkers(config, trial_det, walkers, hamiltonian, h0, energy_new)
-    tree_map(
-    lambda x: x.block_until_ready() if hasattr(x, "block_until_ready") else x,
-    new_walkers
-    )
-    t_prop += time() - t_prop_s
-    print("propagation time", time() - t_prop_s)
-    #print(f"{new_walkers.__class__=} ")
-
+    
+    new_walkers, num_rare_event =new.propagate_walkers(config, trial_det, walkers, hamiltonian, h0, energy_new)
     walkers= new_walkers
-    avg_weight = config.backend.mean(walkers.weights)
+    avg_weight = np.mean(walkers.weights)
     #tot_auxiliary_time += au_time
     # Write the average to a file (one line per step).
     weights_file.write(f"{j}:   {avg_weight}\n")
@@ -648,18 +412,13 @@ while (j<afqmc.NUM_STEPS+1):
         a = new.measure_energy(config, trial_det, walkers, hamiltonian)
         #a=  measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,e_hf)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
         energy_new= a[0]
-       # print(f"{energy_new.__class__=} {energy_new.dtype =}")
         b = a[1]
         c = a[2]
 #        e_one_new =  E_one(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)
 #        hartree_new = Hartree(PSI_T_up,walkers.weights,walkers.mats_up)
 #        exchange_new = Exchange(PSI_T_up,walkers.weights,walkers.mats_up)
 #
-        tree_map(
-        lambda x: x.block_until_ready() if hasattr(x, "block_until_ready") else x,
-        a        
-        )
-        t_energy += time() - t1 
+
         print('energy test time = ', time()-t1)
 
         #if True: #abs(energy.imag)<abs(trsh_imag) and abs(energy.real-e_hf.real)<abs(trsh_real): #ratio*(energy.real+en_const))):# and (abs((energy.real-e_hf.real)/(en_const+e_hf.real))<MAX_ACC_VAL):
@@ -674,28 +433,13 @@ while (j<afqmc.NUM_STEPS+1):
  
         if j%afqmc.REORTHO_PERIODICITY == 0:
             #for i in range (0, NUM_WALKERS):
-           # print("walkers", walkers.slater_det.__class__, walkers.slater_det.shape, walkers.slater_det.device)
-           # print("walkers", walkers.slater_det)
-           # print("weight", walkers.weights)
-           
-            # walker_cpu = device_get(walkers.slater_det)
-            # Save as .npy file
-            # np.save("walkers.npy", walker_cpu)
-            t_qr_s = time()
-            #walkers.slater_det = new.reortho_qr(config, walkers.slater_det)
-            walkers.slater_det = new.cholesky_orthonormalize_complex_jax(walkers.slater_det)
-            tree_map(
-            lambda x: x.block_until_ready() if hasattr(x, "block_until_ready") else x,
-            walkers.slater_det        
-            )
-            t_qr += time() - t_qr_s
-            print("qr time", time() - t_qr_s)
-            print('NUM_WALKERS = ', NUM_WALKERS)
+            walkers.slater_det = new.reortho_qr(config, walkers.slater_det)
+            #print('NUM_WALKERS = ', NUM_WALKERS)
         if afqmc.REBAL_PERIODICITY!=0 and j%afqmc.REBAL_PERIODICITY==0: 
         #    print("Rebalencing")
             #comm = MPI.COMM_WORLD
             #walkers.slater_det, walkers.weights = new.rebalance_global(comm, walkers.slater_det, walkers.weights, config)       ######global rebalencing by gathering slater amd weights on rank 0
-            rebalanced_weights_indices = new.rebalance_comb_jax(config, walkers.weights)
+            rebalanced_weights_indices = new.rebalance_comb(config, walkers.weights)
             walkers.slater_det = walkers.slater_det[rebalanced_weights_indices]
             walkers.weights = new.init_walkers_weights(config, NUM_WALKERS)
         j+=1
@@ -742,12 +486,12 @@ data1=np.loadtxt(file_out)
 data = data1[:,[1]]
 st = int(len(data)*afqmc.EQUILIBRATION)
 en = len(data)
-#a = new.blockAverage(data[st:en], afqmc.block_divisor)
+a = new.blockAverage(data[st:en], afqmc.block_divisor)
 if afqmc.first_cpu:
     print()
     print('Calculating ground state energy...')
     print()
-    #print ('E_gs_afqmc = ', np.mean(data[st:en]), '+-', np.sqrt(max(a[1])))
+    print ('E_gs_afqmc = ', np.mean(data[st:en]), '+-', np.sqrt(max(a[1])))
     print('Block mean = ', a[2])
     print('Total number of the rare event= ', rare_event_total_count)
     print('Numver of steps with rare events= ', rare_event_steps_count)
@@ -761,13 +505,9 @@ with open("outcar.txt", "a") as outcar:
     if afqmc.first_cpu:
         outcar.write("Calculating ground state energy\n")
         outcar.write(f"E_gs_afqmc = {np.mean(data[st:en])}\n")
-       # outcar.write(f"+- {np.sqrt(max(a[1]))}\n")
+        outcar.write(f"+- {np.sqrt(max(a[1]))}\n")
         outcar.write(f"Number of steps with rare events = {rare_event_steps_count}\n")
         outcar.write(f"Total number of rare events = {rare_event_total_count}\n")
-        outcar.write(f"Total time of AFQMC = {-start_time + time()}\n")
-        outcar.write(f"Total time of propagation = {t_prop}\n")
-        outcar.write(f"Total time of energy = {t_energy}\n")
-        outcar.write(f"Total time of qr/choleski = {t_qr}\n")
 
 
 if afqmc.first_cpu:
