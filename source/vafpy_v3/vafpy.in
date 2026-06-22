@@ -1,0 +1,44 @@
+      SYSTEM   : Diamond
+
+      System Properties:
+      NGVEC    : 36
+      NEUP     : 4
+      EBANDS   : -20.16022842
+      NEDOWN   : 4
+      NORB     : 8
+      EHZB     : 0
+      ECONST   : 0
+      SPIN     : 0
+      FSG      : 0
+
+      CONTROL PARAMETER FOR THIS RUN:
+      PROPAG   : S2
+      EQLB     : 0.1
+      DTAU     : 0.005
+      NWAK     : 100
+      NSTP     : 20
+      BLKDIV   : 5
+      KPOINT   : 1
+      TMAX     : 184800
+      OTEY     : 6
+      TIMG     : 10
+      TREL     : 10
+      SEED     : 12345
+
+      METHOD IMPLEMENTATION:
+      UPDTM    : H
+      REOPRI   : 1
+      REBPRI   : 5
+      SMFRQ    : 1
+      CHPRI    : 39999
+
+      SINGULAR VALUE DECOMPOSITION and HATREE-FOCK:
+      SVD      : False
+      SVDT     : 1e-7
+      HF       : False
+      HFTAU    : 1.0e-10
+      HFSTP    : 1
+
+      Config:
+      PRECSION : Double
+      BACKEND  : NumPy
