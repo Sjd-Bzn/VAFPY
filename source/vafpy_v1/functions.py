@@ -418,7 +418,7 @@ def obtain_H1(config):
     Reshape H1 (H1.npy shape is num_orb, num_orb, num_k
     we implement the k_points to the H1)
     """
-    input_h1 = config.backend.load("H1_svd.npy").astype(config.complex_type)
+    input_h1 = config.backend.load("H1.npy").astype(config.complex_type)
     output_h1 = config.backend.moveaxis(input_h1, -1, 0)
     return config.backend.block_diag(*output_h1)
 
@@ -643,7 +643,7 @@ def reortho_qr(config , walker_matrix):
     Q, R = config.backend.linalg.qr(walker_matrix)
     return Q
 
-def init_walkers_weights(config.backend, n_walkers):
+def init_walkers_weights(config, n_walkers):
     '''
     It initializes the weights.
     '''

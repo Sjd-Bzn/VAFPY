@@ -549,52 +549,9 @@ def obtain_H1(config):
     output_h1 = config.backend.moveaxis(input_h1, -1, 0)
     return   config.backend.block_diag(*output_h1)
 
-#def obtain_H2(config):
-#    input_h2 = config.backend.load("H2_zip.npy").astype(config.complex_type)
-#    return input_h2
-
 def obtain_H2(config):
-    """
-    Reshape  H2 into
-        L[q, k2, n2, n1, g]   with momentum conservation built-in.
-    """
-    cb = config.backend
-    cct = config.complex_type
-
-    # --- constants from your config  ---------------------------------
-    nk  = config.num_kpoint
-    nb  = config.num_orbital
-    g = config.num_g
-    # load k1_list
-    #k1_list = cb.load("k1_list.npy")          # shape (q, k2)
-    #q = k1_list[0]
-
-     # -----------------------------------------------------------------
-
-    two_body = cb.load("H2_svd.npy").astype(cct)
-    two_body=cb.moveaxis(two_body, 0, -1)
-    print("tw body", two_body.shape)
-    nb1, n2nk, nkg = two_body.shape
-
-    nb2 = n2nk // nk
-    g = nkg // nk
-    # reshape (k2, nb2, n1, q, g)
-    L = two_body.reshape(nk, nb2, nb1, nk, g)
-
-    # transpose to (q, nk, nb2, nb1, g)
-    L = L.transpose(3, 0, 1, 2, 4)
-
-
-    #L = cb.empty((nk, q, nb, nb, ), dtype=cct)
-
-    # momentum-conserving pick
-   # #for q in range(nk):
-   #     for k2 in range(nk):
-   #         k1  = int(k1_list[q, k2]) -1
-   #         L[q, k2] = two_body[k1, k2]
-    print("L", L.shape)
-
-    return L
+    input_h2 = config.backend.load("H2_zip.npy").astype(config.complex_type)
+    return input_h2
 
 
 
@@ -669,7 +626,7 @@ def load_and_reshape_two_body(config):
 
 
 def initialize_determinant(config):
-    shape = (config.num_kpoint, config.num_kpoint, config.num_orbital, config.num_electron)
+    shape = (config.num_orbital, config.num_electron)
     trial_det = config.backend.eye(*shape, dtype=config.float_type)
     slater_det = config.backend.array(config.num_walkers * [trial_det])
     walkers = Walkers(
