@@ -348,8 +348,8 @@ class NumpyBackend(Backend):
         return self._generator_1.uniform(size=shape).astype(dtype)
     
     def random_uniform_scalar(self, dtype):
-        return dtype(self._generator.uniform(0, 1))
-    
+        return dtype(self._generator_1.uniform(0, 1))
+
     def qr(self, matrix):
         return np.linalg.qr(matrix)
     
