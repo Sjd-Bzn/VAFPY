@@ -2,13 +2,17 @@ from dataclasses import dataclass
 import types
 from time import time
 import numpy as np
+import cupy as cp
 import jax
 import jax.numpy as jnp
 import scipy
 from mpi4py import MPI
 from opt_einsum import contract, contract_expression
-
 from scipy.linalg import expm
+
+
+
+
 
 @dataclass
 class HAMILTONIAN:
@@ -37,14 +41,14 @@ def reshape_H1(H1, num_k, num_orb):
         h1[i*num_orb:(i+1)*num_orb,i*num_orb:(i+1)*num_orb] = H1[:,:,i]
     return h1
 
-def A_af_MF_sub(trial_0,trial,h2,q_list,num_k,num_orb,num_electrons_up):
+def A_af_MF_sub(trial_0,trial,h2,q_list,num_k,num_orb,num_electrons_up, config):
     '''
     It returns two body Hamiltonian after mean-field subtraction.
     '''
     avg_A_mat = np.zeros_like(h2)
     h2_shape = h2.shape
     for Q in range(1,num_k+1):
-        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q,num_orb,num_electrons_up)
+        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q,num_orb,num_electrons_up, config)
         K1s_K2s = get_k1s_k2s(q_list,Q)
         for K1,K2 in K1s_K2s:
             for g in range(h2_shape[2]):
@@ -52,16 +56,17 @@ def A_af_MF_sub(trial_0,trial,h2,q_list,num_k,num_orb,num_electrons_up):
                     avg_A_mat[(K1-1)*num_orb+r][(K2-1)*num_orb+r][g]=avg_A_vec_Q[g]
     return h2-avg_A_mat/num_electrons_up/2/num_k
 
-def avg_A_Q(trial_0,trial,h2,q_list,q_selected,num_orb,num_electrons_up):
+def avg_A_Q(trial_0,trial,h2,q_list,q_selected,num_orb,num_electrons_up, config):
     '''
     It returns average of two-body Hamiltonian for a specified Q.
     '''
     K1s_K2s = get_k1s_k2s(q_list,q_selected)
     theta_full = theta(trial, trial)
     h2_shape = h2.shape[2]
-    result = 1j*np.zeros(h2_shape)
+    result = 1j*config.backend.zeros(h2_shape)
+    #result = 1j*cp.zeros(h2_shape)
     for K1,K2 in K1s_K2s:
-        alpha = get_alpha_k1_k2(trial_0,h2,K1,K2,num_orb)
+        alpha = get_alpha_k1_k2(trial_0,h2,K1,K2,num_orb, config)
         result += contract('iiG->G',contract('nrG,rm->nmG',alpha,theta_full[(K2-1)*num_orb:K2*num_orb,(K1-1)*num_electrons_up:K1*num_electrons_up]))
     return 2*result
 
@@ -95,12 +100,12 @@ def mean_field( h2, num_elec, num_band, num_k):
     #m = np.linalg.det( h2[:num_elec, : num_elec].T)
     return m
 
-def get_alpha_k1_k2(trial_0,h2,k1_idx,k2_idx,num_orb):                                                               #####! it doesnt use mean field subtraction
+def get_alpha_k1_k2(trial_0,h2,k1_idx,k2_idx,num_orb, config):                                                               #####! it doesnt use mean field subtraction
     '''
     It returns alpha to be used as an intermediate object to compute one-body reduced density tensors.
     '''
     A_Q = get_A_k1_k2(h2,k1_idx,k2_idx,num_orb)
-    result = np.einsum('ip,prG->irG',trial_0.T,A_Q)
+    result = config.backend.einsum('ip,prG->irG',trial_0.T,A_Q)
     return result
 
 def get_A_k1_k2(h2,k1_idx,k2_idx, num_orb):
@@ -109,14 +114,14 @@ def get_A_k1_k2(h2,k1_idx,k2_idx, num_orb):
     '''
     return h2[(k1_idx-1)*num_orb:k1_idx*num_orb,(k2_idx-1)*num_orb:k2_idx*num_orb,:]
 
-def H_1_mf(trial_0,trial,h2,h2_dagger,q_list,h1,num_k,num_orb,num_electrons_up):
+def H_1_mf(trial_0,trial,h2,h2_dagger,q_list,h1,num_k,num_orb,num_electrons_up, config):
     '''
     It returns one-body part of the Hamiltonian after mean-field subtraction.
     '''
     change = 1j*np.zeros_like(h1)
     for Q in range(1,num_k+1):
-        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q,num_orb,num_electrons_up)
-        avg_A_vec_Q_dagger = avg_A_Q(trial_0,trial,h2_dagger,q_list,Q,num_orb,num_electrons_up)
+        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q,num_orb,num_electrons_up, config)
+        avg_A_vec_Q_dagger = avg_A_Q(trial_0,trial,h2_dagger,q_list,Q,num_orb,num_electrons_up, config)
         K1s_K2s = get_k1s_k2s(q_list,Q)
         for K1,K2 in K1s_K2s:
             change[(K1-1)*num_orb:K1*num_orb,(K2-1)*num_orb:K2*num_orb] = contract('rpG->rp',contract('G,rpG->rpG',avg_A_vec_Q_dagger,h2[(K1-1)*num_orb:K1*num_orb,(K2-1)*num_orb:K2*num_orb,:])+contract('G,rpG->rpG',avg_A_vec_Q,h2_dagger[(K1-1)*num_orb:K1*num_orb,(K2-1)*num_orb:K2*num_orb,:]))
@@ -137,6 +142,84 @@ def gen_A_o_full(h2):
     return a_o
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#def reshape_H1(H1, num_k, num_orb):
+#    '''
+#    Reshape H1 (H1.npy shape is num_orb, num_orb, num_k
+#    we implement the k_points to the H1)
+#    '''
+#    h1=np.zeros([num_orb*num_k,num_orb*num_k],dtype=np.complex128)
+#    for i in range(0,num_k):
+#        h1[i*num_orb:(i+1)*num_orb,i*num_orb:(i+1)*num_orb] = H1[:,:,i]
+#    return h1
+
+#def A_af_MF_sub(trial_0,trial,h2,q_list,num_k,num_orb,num_electrons_up, config):
+#    '''
+#    It returns two body Hamiltonian after mean-field subtraction.
+#    '''
+#    avg_A_mat = config.backend.zeros_like(h2)
+#    h2_shape = h2.shape
+#    for Q in range(1,num_k+1):
+#        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q,num_orb,num_electrons_up, config)
+#        K1s_K2s = get_k1s_k2s(q_list,Q)
+#        for K1,K2 in K1s_K2s:
+#            for g in range(h2_shape[2]):
+#                for r in range(num_orb):
+#                    if config.backend.__name__ == "jax.numpy":
+#                        avg_A_mat = avg_A_mat.at[(K1-1)*num_orb+r,(K2-1)*num_orb+r, g].set(avg_A_vec_Q[g])
+#                    else:
+#                        avg_A_mat[(K1 - 1) * num_orb + r][(K2 - 1) * num_orb + r][g] = avg_A_vec_Q[g]
+#    return h2-avg_A_mat/num_electrons_up/2/num_k
+
+
+
+#def theta(config, trial, slater_det):
+#    overl = overlap(config, trial, slater_det)
+#
+#    if config.backend.__name__ == "jax.numpy":
+#        # Use CuPy for stable GPU-based matrix inversion
+#        overl_cp = cp.asarray(overl)
+#        slater_cp = cp.asarray(slater_det)
+#        inv_cp = cp.linalg.inv(overl_cp)
+#        result_cp = cp.matmul(slater_cp, inv_cp)
+#
+#        # Convert CuPy result back to JAX
+#        result_jnp = jax.device_put(cp.asnumpy(result_cp))
+#        return result_jnp
+#
+#    else:
+#        # Use backend-provided inversion (NumPy, CuPy, etc.)
+#        inverse_overlap = config.backend.linalg.inv(overl)
+#        return config.backend.dot(slater_det, inverse_overlap)
+
+
+
+#def theta(config, trial, walker):
+#    ovlp = overlap(config, trial, walker)
+#    return jax.scipy.linalg.solve(ovlp, walker.T).T
+
+
+#def theta(config, trial, slater_det):
+#    inverse_overlap = config.backend.linalg.inv(trial.T @ slater_det)
+#    return contract("wpi, wij -> wpj", slater_det, inverse_overlap)
+
+
+
 def main(precision, backend):
     #print()
    # max_seed = np.iinfo(np.int32).max
@@ -145,6 +228,8 @@ def main(precision, backend):
         backend = NumpyBackend(seed)
     elif backend == "jax":
         backend = JaxBackend(seed)
+    elif backend == "cupy":
+        backend = CupyBackend(seed)
     else:
         raise NotImplementedError(f"Selected {backend=} not implemented!")
     config = Configuration(
@@ -208,9 +293,27 @@ class Backend:
 class JaxBackend(Backend):
     def __init__(self, seed):
         super().__init__(jnp)
-        self.block_diag = jax.scipy.linalg.block_diag
+        #self.block_diag = jax.scipy.linalg.block_diag
         self._key = jax.random.key(seed)
+        #self.expm = jax.scipy.linalg.expm
+        self.linalg = jnp.linalg
+    
+    def block_diag(self, *matrices):
+        matrix_copy = [np.asarray(matrix) for matrix in matrices]
+        matrix = scipy.linalg.block_diag(*matrix_copy)
+        return jnp.array(matrix)
 
+    def expm(self, matrix):
+        result = scipy.linalg.expm(matrix)
+        return jnp.array(result)
+
+    def cumsum(self, x):
+        return jnp.cumsum(x)
+    
+
+    def qr(self, matrix):
+        return jax.numpy.linalg.qr(matrix)
+    
     def random_normal(self, shape, dtype):
         self._key, subkey = jax.random.split(self._key)
         return jax.random.normal(subkey, shape, dtype)
@@ -218,6 +321,10 @@ class JaxBackend(Backend):
     def random_uniform(self, shape, dtype):
         self._key, subkey = jax.random.split(self._key)
         return jax.random.uniform(subkey, shape, dtype=dtype)
+    
+    def random_uniform_scalar(self, dtype):
+        self._key, subkey = jax.random.split(self._key)
+        return jax.random.uniform(subkey, shape=(), dtype=dtype)
 
 
 
@@ -225,9 +332,13 @@ class NumpyBackend(Backend):
     def __init__(self, seed):
         super().__init__(np)
         self.block_diag = scipy.linalg.block_diag
+        self.expm = scipy.linalg.expm
         self._generator_1 = np.random.default_rng(seed)
         #self._generator_2 = np.random.default_rng(seed)
          
+    def cumsum(self, x):
+        return np.cumsum(x)
+    
     def random_normal(self, shape, dtype):
         #a = self._generator_1.standard_normal(shape, dtype)
         #b = self._generator_2.standard_normal(shape, dtype)
@@ -236,6 +347,44 @@ class NumpyBackend(Backend):
     
     def random_uniform(self, shape, dtype):
         return self._generator_1.uniform(size=shape).astype(dtype)
+    
+    def random_uniform_scalar(self, dtype):
+        return dtype(self._generator.uniform(0, 1))
+    
+    def qr(self, matrix):
+        return np.linalg.qr(matrix)
+    
+
+class CupyBackend(Backend):
+    def __init__(self, seed):
+        super().__init__(cp)
+        self._generator = cp.random.default_rng(seed)
+
+    def block_diag(self, *matrices):
+        matrix_copies = (matrix.get() for matrix in matrices)
+        matrix = scipy.linalg.block_diag(*matrix_copies)
+        return cp.array(matrix)
+
+    def expm(self, matrix):
+        exp_matrix = scipy.linalg.expm(matrix.get())
+        return cp.array(exp_matrix)
+
+    def cumsum(self, x):
+        return cp.cumsum(x)
+
+    def qr(self, matrix):
+        return cp.linalg.qr(matrix)
+    
+
+
+    def random_normal(self, shape, dtype):
+        return self._generator.standard_normal(shape).astype(dtype)
+
+    def random_uniform(self, shape, dtype):
+        return self._generator.uniform(size=shape).astype(dtype)
+
+    def random_uniform_scalar(self, dtype):
+        return self._generator.uniform(0, 1, size=()).astype(dtype)
 
 
 @dataclass
@@ -273,7 +422,11 @@ class Configuration:
 
     def _precision_error_message(self):
         return f"Specified precision '{self.precision}' not implemented."
-
+    
+####### just for rebalencing
+    @property
+    def int_type(self):
+        return self.backend.int32
 
 @dataclass
 class Walkers:
@@ -324,13 +477,14 @@ class Hamiltonian:
 
         h_mf = self.compute_mean_field_one_body(config, trial_det, ql)
         h_sic = -contract('ijG, kjG -> ik', self.two_body, self.two_body.conj()) / 2
-        h1 = self.one_body + h_mf + h_sic
+        h1 = self.one_body.astype(config.complex_type) + h_mf + h_sic
         #print("h_mf", h_mf)
         #print("h_sic", h_sic)
         self._h1 = -h1 * config.timestep
-        self._exp_h1 = expm(-h1 * config.timestep)
-        self._exp_h1_half = expm(-0.5 * h1 * config.timestep)
+        self._exp_h1 = config.backend.expm(-h1 * config.timestep)
+        self._exp_h1_half = config.backend.expm(-0.5 * h1 * config.timestep)
         two_body = self.compute_mean_field_two_body(config, trial_det, ql)
+        #print("two_body", two_body.__class__) 
         alpha = contract("pi, prg -> irg", trial_det, two_body)
         self._sqrt_tau = config.backend.sqrt(config.timestep).astype(config.float_type)
         self._force_bias_expression = contract_expression(
@@ -368,7 +522,7 @@ class Hamiltonian:
         field = 1j * self._sqrt_tau * self._auxiliary_field(random_field - force_bias)
  #       fi_time = time()
   #      print("Aux time" ,st_time - fi_time)
-        return field, np.exp(arg)
+        return field, config.backend.exp(arg)
 
     def create_random_field(self, config):
         if self.test_random_field is None:
@@ -379,26 +533,34 @@ class Hamiltonian:
 
     def compute_mean_field_one_body(self, config, trial_det, ql):
         # interface to legacy code
-        h2_t = np.einsum('prG->rpG', self.two_body.conj())
-        h1_legacy = H_1_mf(trial_det,trial_det,self.two_body,h2_t,ql,self.one_body,config.num_kpoint,config.num_orbital,config.num_electron)
+        h2_t = contract('prG->rpG', self.two_body.conj())
+        h1_legacy = H_1_mf(trial_det,trial_det,self.two_body,h2_t,ql,self.one_body,config.num_kpoint,config.num_orbital,config.num_electron, config)
         result = h1_legacy - self.one_body
         return config.backend.array(result, dtype=config.complex_type)
 
     def compute_mean_field_two_body(self, config, trial_det, ql):
         # interface to legacy code
-        h2_af_MF_sub = A_af_MF_sub(trial_det,trial_det,self.two_body,ql,config.num_kpoint,config.num_orbital,config.num_electron)
+        h2_af_MF_sub = A_af_MF_sub(trial_det,trial_det,self.two_body,ql,config.num_kpoint,config.num_orbital,config.num_electron, config)
         two_body_e = gen_A_e_full(h2_af_MF_sub)
         two_body_o = gen_A_o_full(h2_af_MF_sub)
-        result = np.concatenate((two_body_e, two_body_o), axis=-1)
-        return config.backend.array(result, dtype=config.complex_type)
+        result = config.backend.concatenate(
+        (config.backend.array(two_body_e, dtype=config.complex_type),
+        config.backend.array(two_body_o, dtype=config.complex_type)),
+        axis=-1)
+
+        return result
+
+
+        #result = np.concatenate((two_body_e, two_body_o), axis=-1)
+        #return config.backend.array(result, dtype=config.complex_type)
 
     
     def exp_h0( config, theta):
-        a =  2 * compute_hartreei( theta) / (2*config.num_electron)
+        a =   compute_hartree( theta) / (2*config.num_electron)
         print("a",a)
-        b = np.exp(config.timestep*a)
+        b = config.backend.exp(config.timestep*a)
         print("b",b)
-        return 1
+        return b
 
     @property
     def h1(self):
@@ -449,9 +611,9 @@ def measure_energy(config, trial, walkers, hamiltonian):
 
     # average over all ranks
     sum_weights = config.backend.sum(walkers.weights)
-    weighted_energy_global = config.comm.allreduce(weighted_energy)
-    sum_weights_global = config.comm.allreduce(sum_weights)
-    return weighted_energy_global / sum_weights_global, weighted_energy_global, sum_weights_global
+    #weighted_energy_global = config.comm.allreduce(weighted_energy)
+    #sum_weights_global = config.comm.allreduce(sum_weights)
+    return weighted_energy / sum_weights, weighted_energy, sum_weights
 
 def measure_hartree(config, trial, walkers, hamiltonian):
     # compute energies locally
@@ -468,11 +630,13 @@ def measure_hartree(config, trial, walkers, hamiltonian):
 
 
 #tot_aux_time = 0
-def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0):
-    new_walkers = Walkers(np.zeros_like(walkers.slater_det), np.zeros_like(walkers.weights))
+def propagate_walkers(config, trial, walkers, hamiltonian, h0, e_0):
+    new_walkers = Walkers(config.backend.zeros_like(walkers.slater_det), config.backend.zeros_like(walkers.weights))
     theta = biorthogonalize(config.backend, trial, walkers.slater_det)
+    #print("theta", theta.shape)
     h2, importance = hamiltonian.create_auxiliary_field(config, theta)
     #tot_aux_time += au_time
+    #print("h2", h2.shape)
     num_rare_event = 0
 #    print('h_2 type', h2.dtype, h2.__class__)
 
@@ -491,8 +655,8 @@ def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0):
         #print("half_step_with_h1" ,half_step_with_h1.shape) 
         full_step_with_h2 = apply_taylor(config, h2, half_step_with_h1)
         half_step_with_h1 = hamiltonian.exp_h1_half @ full_step_with_h2
-        new_walkers.slater_det = half_step_with_h1 * h_0 
-        #print("walker", half_step_with_h1.shape)
+        new_walkers.slater_det = half_step_with_h1 * h0
+      #  print("walker", new_walkers.slater_det.shape)
         #print("h0", hamiltonian.exp_h0.shape)  
     else:
         raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
@@ -501,17 +665,17 @@ def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0):
     old_overlap = project_trial(config.backend, trial, walkers.slater_det)
     overlap_ratio = new_overlap / old_overlap
     cos_alpha = config.backend.cos(config.backend.angle(overlap_ratio))
-    factor = abs(overlap_ratio * importance * (config.backend.exp(config.timestep*e_0))) 
-    
-    factor = np.where(factor < 10, factor, 0)  # Fixes ambiguous truth value issue
+    factor = abs(overlap_ratio * importance * (config.backend.exp(config.timestep*e_0)))
+
+    factor = config.backend.where(factor < 10, factor, 0)  # Fixes ambiguous truth value issue
     #print("factor", np.mean(factor))
-    num_rare_event += np.sum(factor == 0)  # Count number of events where factor was reset
-    #if np.all(np.abs(factor) < 10):  
+    num_rare_event += config.backend.sum(factor == 0)  # Count number of events where factor was reset
+    #if np.all(np.abs(factor) < 10):
    #     factor = factor
    # else:
    #     factor = 0
    #     num_rare_event += 1
-    a = abs(factor)* np.maximum(0, cos_alpha)
+    a = abs(factor)* config.backend.maximum(0, cos_alpha)
     new_walkers.weights = a * walkers.weights
 
     return new_walkers, num_rare_event
@@ -526,9 +690,56 @@ def apply_taylor(config, matrix, slater_det):
         result += addend
     return result
 
+#def biorthogonalize(backend, trial, slater_det):
+#    print("trial", trial.shape)
+#    print("slater", slater_det.shape)
+#    inverse_overlap = backend.linalg.inv(trial.T @ slater_det)
+#    print("inv", inverse_overlap.shape)
+#    return contract("wpi, wij -> wpj", slater_det, inverse_overlap)
+#def biorthogonalize(backend, trial, slater_det):
+#    # trial: (n, p), slater_det: (w, n, p)
+#    print("trial", trial.shape)
+#    print("slater", slater_det.shape)
+#
+#    trial_H = backend.swapaxes(trial, -1, -2).conj()      # (p, n)
+#    trial_H = backend.expand_dims(trial_H, axis=0)        # (1, p, n)
+#    trial_H = backend.broadcast_to(trial_H, (slater_det.shape[0], *trial_H.shape[1:]))  # (w, p, n)
+#
+#    overlap = backend.matmul(trial_H, slater_det)         # (w, p, p)
+#    inverse_overlap = backend.linalg.inv(overlap)         # (w, p, p)
+#    print("inv", inverse_overlap.shape)
+#
+#    return contract("wip, wpq -> wiq", slater_det, inverse_overlap)
+
+
 def biorthogonalize(backend, trial, slater_det):
-    inverse_overlap = backend.linalg.inv(trial.T @ slater_det)
+    
+    overlap = (trial.T @ slater_det)  
+    inverse_overlap = backend.linalg.inv(overlap)
     return contract("wpi, wij -> wpj", slater_det, inverse_overlap)
+
+
+#def biorthogonalize(backend, trial, slater_det):
+#    #print("trial", trial.shape)
+#    #print("slater", slater_det.shape)
+#
+#    if backend.__name__ == "jax.numpy":
+#        # trial: (n, p), slater_det: (w, n, p)
+#        def compute_inverse(slater_slice):
+#            overlap = trial.T.conj() @ slater_slice  # (p, p)
+#            return jnp.linalg.inv(overlap)
+#
+#        inv_batch = vmap(compute_inverse)(slater_det)  # (w, p, p)
+#
+#        # Compute final contraction
+#        theta = jnp.einsum("wip, wpq -> wiq", slater_det, inv_batch)
+#     #   print("inv", inv_batch.shape)
+#     #   print("theta", theta.shape)
+#        return theta
+#
+#    else:
+#        inverse_overlap = backend.linalg.inv(trial.T @ slater_det)
+#        return contract("wpi, wij -> wpj", slater_det, inverse_overlap)
 
 def project_trial(backend, trial, slater_det):
     overlap = trial.T @ slater_det
@@ -544,9 +755,12 @@ def rebalance_comb(config, weights):
     c = config.backend.cumsum(weights.real)
     W = c[-1]            # total weight
     # random offset in [0, W/N)
-    r = config.backend.random.uniform(0, W/N)
-
-    new_indices = config.backend.zeros(N, dtype=int)
+    #r = config.backend.random_uniform(0, W/N)
+        
+    # Random offset r in [0, W/N)
+    r = (W / N) * config.backend.random_uniform_scalar(dtype=config.float_type)
+    
+    new_indices = config.backend.zeros(N, dtype=config.int_type)
 
     # pointer for searching in c
     i = 0
@@ -574,37 +788,37 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
     # Step 1: Gather weights globally
     all_weights = None
     if rank == 0:
-        all_weights = np.empty(total_n, dtype=config.complex_type)
+        all_weights = config.backend.empty(total_n, dtype=config.complex_type)
     comm.Gather(walkers_weights, all_weights, root=0)
 
     # Step 2: Normalize weights and determine global instances (rank 0 only)
     instances = None
     if rank == 0:
-        norm_factor = total_n / np.sum(all_weights.real)
+        norm_factor = total_n / config.backend.sum(all_weights.real)
         norm_weights = all_weights.real * norm_factor
 
         # Random bias (shift)
         bias = -config.backend.random_uniform((), config.float_type)  
-        #bias = -np.random.random()
+
 
         # Determine how many copies (instances) each walker has after resampling
-        instances = np.zeros(total_n, dtype=int)
+        instances = config.backend.zeros(total_n, dtype=config.int_type)     ########int is required not float
         cumulative_sum = bias
         previous = 0
         for i in range(total_n):
             cumulative_sum += norm_weights[i]
-            current = int(np.ceil(cumulative_sum))
+            current = int(config.backend.ceil(cumulative_sum))
             instances[i] = current - previous
             previous = current
 
     # Step 3: Broadcast instances to all ranks
     if rank != 0:
-        instances = np.empty(total_n, dtype=int)
+        instances = config.backend.empty(total_n, dtype=config.int_type)     ########int
     comm.Bcast(instances, root=0)
 
     # Step 4: Determine global mapping of walkers after rebalancing
-    new_total_walkers = np.sum(instances)
-    map_indices = np.empty(new_total_walkers, dtype=int)
+    new_total_walkers = config.backend.sum(instances)
+    map_indices = config.backend.empty(new_total_walkers, dtype=config.int_type)     ######int
     count = 0
     for idx, num_instances in enumerate(instances):
         for _ in range(num_instances):
@@ -618,7 +832,7 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
     # Gather all walkers to rank 0 first
     all_mats_up = None
     if rank == 0:
-        all_mats_up = np.empty((total_n, N_orb, N_elec), dtype=np.complex128)
+        all_mats_up = config.backend.empty((total_n, N_orb, N_elec), dtype=config.complex_type)
     comm.Gather(walkers_mats_up, all_mats_up, root=0)
 
     # Rearrange walkers according to the resampled indices
@@ -627,27 +841,124 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
         resampled_mats_up = all_mats_up[map_indices]
 
     # Scatter evenly back to ranks
-    new_mats_up = np.empty((local_n, N_orb, N_elec), dtype=np.complex128)
+    new_mats_up = config.backend.empty((local_n, N_orb, N_elec), dtype=config.complex_type)
     comm.Scatter(resampled_mats_up, new_mats_up, root=0)
 
     # Step 6: Reset weights uniformly
-    new_weights = np.ones(local_n, dtype=np.complex128)
+    new_weights = config.backend.ones(local_n, dtype=config.complex_type)
 
     return new_mats_up, new_weights
 
+#def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
+#    backend = config.backend
+#    rank = comm.Get_rank()
+#    size = comm.Get_size()
+#
+#    local_n, N_orb, N_elec = walkers_mats_up.shape
+#    total_n = local_n * size
+#
+#    # Step 1: Gather weights globally
+#    all_weights = None
+#    if rank == 0:
+#        all_weights = backend.empty(total_n, dtype=config.complex_type)
+#    # For MPI, ensure walkers_weights is on host (NumPy)
+#    comm.Gather(
+#        walkers_weights if backend.__name__ == 'numpy' else backend.asarray(walkers_weights),
+#        all_weights,
+#        root=0
+#    )
+#
+#    # Step 2: Normalize weights and determine global instances (rank 0 only)
+#    instances = None
+#    if rank == 0:
+#        total_weight = backend.sum(all_weights.real)
+#        norm_factor = total_n / total_weight
+#        norm_weights = all_weights.real * norm_factor
+#
+#        # Random bias (shift)
+#        bias = -config.backend.random_uniform((), config.float_type)
+#
+#        # Determine how many copies (instances) each walker has after resampling
+#        instances = backend.zeros(total_n, dtype=int)
+#
+#        cumulative_sum = bias
+#        previous = 0
+#        instances_list = []  # We cannot dynamically index arrays easily in JAX, so use Python list
+#
+#        norm_weights_host = backend.device_get(norm_weights) if hasattr(backend, 'device_get') else norm_weights
+#        for w in norm_weights_host:
+#            cumulative_sum += w
+#            current = int(backend.ceil(cumulative_sum))
+#            instances_list.append(current - previous)
+#            previous = current
+#
+#        instances = backend.array(instances_list, dtype=int)
+#
+#    # Step 3: Broadcast instances to all ranks
+#    if rank != 0:
+#        instances = backend.empty(total_n, dtype=int)
+#    comm.Bcast(
+#        instances if backend.__name__ == 'numpy' else backend.asarray(instances),
+#        root=0
+#    )
+#
+#    # Step 4: Determine global mapping of walkers after rebalancing
+#    new_total_walkers = backend.sum(instances).item()  # get scalar
+#    map_indices = backend.empty(new_total_walkers, dtype=int)
+#
+#    count = 0
+#    indices_list = []
+#    instances_host = backend.device_get(instances) if hasattr(backend, 'device_get') else instances
+#    for idx, num_instances in enumerate(instances_host):
+#        for _ in range(num_instances):
+#            indices_list.append(idx)
+#
+#    map_indices = backend.array(indices_list, dtype=int)
+#
+#    # Step 5: Distribute resampled walkers evenly back to ranks
+#    assert new_total_walkers == total_n, "Walker count mismatch after rebalancing."
+#
+#    all_mats_up = None
+#    if rank == 0:
+#        all_mats_up = backend.empty((total_n, N_orb, N_elec), dtype=config.complex_type)
+#    comm.Gather(
+#        walkers_mats_up if backend.__name__ == 'numpy' else backend.asarray(walkers_mats_up),
+#        all_mats_up,
+#        root=0
+#    )
+#
+#    resampled_mats_up = None
+#    if rank == 0:
+#        resampled_mats_up = all_mats_up[map_indices]
+#
+#    new_mats_up = backend.empty((local_n, N_orb, N_elec), dtype=config.complex_type)
+#    comm.Scatter(
+#        resampled_mats_up if backend.__name__ == 'numpy' else backend.asarray(resampled_mats_up),
+#        new_mats_up,
+#        root=0
+#    )
+#
+#    # Step 6: Reset weights uniformly
+#    new_weights = backend.ones(local_n, dtype=config.complex_type)
+#
+#    return new_mats_up, new_weights
+#
 
-def reortho_qr(config , walker_matrix):
+
+
+
+def reortho_qr(walker_matrix, config):
     '''
     It uses QR decomposition to reorthogonalize the orbitals in a single walker.
     '''
-    Q, R = config.backend.linalg.qr(walker_matrix)
+    Q, R = config.backend.qr(walker_matrix)
     return Q
 
-def init_walkers_weights(config, n_walkers):
+def init_walkers_weights( config):
     '''
     It initializes the weights.
     '''
-    return config.backend.ones(n_walkers, dtype=np.complex64)
+    return config.backend.ones(config.num_walkers, dtype=config.complex_type)
 
 
 def blockAverage(datastream, block_divisor):
