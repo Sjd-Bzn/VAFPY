@@ -2,7 +2,6 @@ from dataclasses import dataclass
 import types
 from time import time
 import numpy as np
-import cupy as cp
 import jax
 import jax.numpy as jnp
 import scipy
@@ -357,6 +356,8 @@ class NumpyBackend(Backend):
 
 class CupyBackend(Backend):
     def __init__(self, seed):
+        global cp
+        import cupy as cp
         super().__init__(cp)
         self._generator = cp.random.default_rng(seed)
 
