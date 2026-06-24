@@ -3,15 +3,15 @@ from mpi4py import MPI
 if MPI.COMM_WORLD.Get_rank() != 0:
     print = lambda *arg, **kwargs: None
 
-from vafpy import input_reader
-#from vafpy.funcs_kpts import reortho_qr, blockAverage
+from vafpy_v1 import input_reader
+#from vafpy_v1.funcs_kpts import reortho_qr, blockAverage
 #first_cpu = comm.Get_rank()==0
 from time import time
 import sys
 from os.path import exists
 log_file = 'log'
 #sys.stdout = open(log_file, "w")
-import vafpy.functions as new
+import vafpy_v1.functions as new
 
 
 def main():
