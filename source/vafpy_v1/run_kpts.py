@@ -444,14 +444,14 @@ def main():
                 else:
                     walkers.slater_det = new.reortho_qr(walkers.slater_det, config)
                 #print('NUM_WALKERS = ', NUM_WALKERS)
-            if afqmc.REBAL_PERIODICITY!=0 and j%afqmc.REBAL_PERIODICITY==0: 
-                #print("Rebalencing", flush = True )
+            if afqmc.REBAL_PERIODICITY!=0 and j%afqmc.REBAL_PERIODICITY==0:
                 comm = MPI.COMM_WORLD
-                #walkers.slater_det, walkers.weights = new.rebalance_global(comm, walkers.slater_det, walkers.weights, config)       ######global rebalencing by gathering slater amd weights on rank 0
-                rebalanced_weights_indices = new.rebalance_comb(config, walkers.weights)
-                #print("Rebalencing done", flush = True )
-                walkers.slater_det = walkers.slater_det[rebalanced_weights_indices]
-                walkers.weights = new.init_walkers_weights( config)
+                if afqmc.REBAL_METHOD == "Local":
+                    rebalanced_weights_indices = new.rebalance_comb(config, walkers.weights)
+                    walkers.slater_det = walkers.slater_det[rebalanced_weights_indices]
+                    walkers.weights = new.init_walkers_weights( config)
+                else:
+                    walkers.slater_det, walkers.weights = new.rebalance_global(comm, walkers.slater_det, walkers.weights, config)
             j+=1
         else:
             if afqmc.first_cpu: 

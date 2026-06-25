@@ -779,171 +779,86 @@ def rebalance_comb(config, weights):
 
 
 
+def _to_host(array):
+    '''
+    Converts a backend-native array to a host NumPy array. np.asarray works
+    for NumPy and JAX, but CuPy deliberately blocks implicit conversion
+    (it has a .get() method instead) to avoid silent device-to-host copies.
+    '''
+    return array.get() if hasattr(array, "get") else np.asarray(array)
+
+
 def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
+    '''
+    Resamples the walker population across ALL MPI ranks (not just locally),
+    pooling every rank's walkers into one population before resampling via
+    systematic (stratified) resampling. This matters when the per-rank
+    walker count is small or has had an unlucky run: purely local resampling
+    (rebalance_comb) can never borrow a high-weight walker from another rank.
+
+    Backend agnostic: mpi4py's Gather/Bcast/Scatter need real NumPy buffers,
+    so all bookkeeping happens on host NumPy arrays, with conversion back to
+    the active backend only for the returned walker matrix.
+    '''
+    backend = config.backend
     rank = comm.Get_rank()
     size = comm.Get_size()
 
     local_n, N_orb, N_elec = walkers_mats_up.shape
     total_n = local_n * size
 
+    local_weights_np = _to_host(walkers_weights).real.astype(np.float64)
+    local_mats_np = _to_host(walkers_mats_up)
+
     # Step 1: Gather weights globally
-    all_weights = None
-    if rank == 0:
-        all_weights = config.backend.empty(total_n, dtype=config.complex_type)
-    comm.Gather(walkers_weights, all_weights, root=0)
+    all_weights = np.empty(total_n, dtype=np.float64) if rank == 0 else None
+    comm.Gather(local_weights_np, all_weights, root=0)
 
     # Step 2: Normalize weights and determine global instances (rank 0 only)
-    instances = None
     if rank == 0:
-        norm_factor = total_n / config.backend.sum(all_weights.real)
-        norm_weights = all_weights.real * norm_factor
+        norm_factor = total_n / np.sum(all_weights)
+        norm_weights = all_weights * norm_factor
 
-        # Random bias (shift)
-        bias = -config.backend.random_uniform((), config.float_type)  
+        # Random bias (shift), drawn from the backend's seeded RNG for
+        # reproducibility with the rest of the simulation
+        bias = -float(_to_host(backend.random_uniform((), config.float_type)))
 
-
-        # Determine how many copies (instances) each walker has after resampling
-        instances = config.backend.zeros(total_n, dtype=config.int_type)     ########int is required not float
+        # Determine how many copies (instances) each walker has after
+        # resampling. This sequential cumulative-sum bookkeeping is cheap
+        # (O(total_n)) and done on host NumPy to sidestep JAX's array
+        # immutability and avoid any backend-specific indexed assignment.
+        instances = np.zeros(total_n, dtype=np.int64)
         cumulative_sum = bias
         previous = 0
         for i in range(total_n):
             cumulative_sum += norm_weights[i]
-            current = int(config.backend.ceil(cumulative_sum))
+            current = int(np.ceil(cumulative_sum))
             instances[i] = current - previous
             previous = current
+    else:
+        instances = np.empty(total_n, dtype=np.int64)
 
     # Step 3: Broadcast instances to all ranks
-    if rank != 0:
-        instances = config.backend.empty(total_n, dtype=config.int_type)     ########int
     comm.Bcast(instances, root=0)
 
     # Step 4: Determine global mapping of walkers after rebalancing
-    new_total_walkers = config.backend.sum(instances)
-    map_indices = config.backend.empty(new_total_walkers, dtype=config.int_type)     ######int
-    count = 0
-    for idx, num_instances in enumerate(instances):
-        for _ in range(num_instances):
-            map_indices[count] = idx
-            count += 1
-
-    # Step 5: Distribute resampled walkers evenly back to ranks
+    new_total_walkers = int(np.sum(instances))
     assert new_total_walkers == total_n, "Walker count mismatch after rebalancing."
+    map_indices = np.repeat(np.arange(total_n), instances)
 
-    # Scatter the new walkers based on the global mapping
-    # Gather all walkers to rank 0 first
-    all_mats_up = None
-    if rank == 0:
-        all_mats_up = config.backend.empty((total_n, N_orb, N_elec), dtype=config.complex_type)
-    comm.Gather(walkers_mats_up, all_mats_up, root=0)
+    # Step 5: Gather all walkers to rank 0, rearrange, scatter back
+    all_mats_up = np.empty((total_n, N_orb, N_elec), dtype=local_mats_np.dtype) if rank == 0 else None
+    comm.Gather(local_mats_np, all_mats_up, root=0)
 
-    # Rearrange walkers according to the resampled indices
-    resampled_mats_up = None
-    if rank == 0:
-        resampled_mats_up = all_mats_up[map_indices]
+    resampled_mats_up = all_mats_up[map_indices] if rank == 0 else None
+    new_mats_np = np.empty((local_n, N_orb, N_elec), dtype=local_mats_np.dtype)
+    comm.Scatter(resampled_mats_up, new_mats_np, root=0)
 
-    # Scatter evenly back to ranks
-    new_mats_up = config.backend.empty((local_n, N_orb, N_elec), dtype=config.complex_type)
-    comm.Scatter(resampled_mats_up, new_mats_up, root=0)
-
-    # Step 6: Reset weights uniformly
-    new_weights = config.backend.ones(local_n, dtype=config.complex_type)
+    # Step 6: Reset weights uniformly, convert walkers back to the active backend
+    new_mats_up = backend.array(new_mats_np)
+    new_weights = backend.ones(local_n, dtype=config.complex_type)
 
     return new_mats_up, new_weights
-
-#def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
-#    backend = config.backend
-#    rank = comm.Get_rank()
-#    size = comm.Get_size()
-#
-#    local_n, N_orb, N_elec = walkers_mats_up.shape
-#    total_n = local_n * size
-#
-#    # Step 1: Gather weights globally
-#    all_weights = None
-#    if rank == 0:
-#        all_weights = backend.empty(total_n, dtype=config.complex_type)
-#    # For MPI, ensure walkers_weights is on host (NumPy)
-#    comm.Gather(
-#        walkers_weights if backend.__name__ == 'numpy' else backend.asarray(walkers_weights),
-#        all_weights,
-#        root=0
-#    )
-#
-#    # Step 2: Normalize weights and determine global instances (rank 0 only)
-#    instances = None
-#    if rank == 0:
-#        total_weight = backend.sum(all_weights.real)
-#        norm_factor = total_n / total_weight
-#        norm_weights = all_weights.real * norm_factor
-#
-#        # Random bias (shift)
-#        bias = -config.backend.random_uniform((), config.float_type)
-#
-#        # Determine how many copies (instances) each walker has after resampling
-#        instances = backend.zeros(total_n, dtype=int)
-#
-#        cumulative_sum = bias
-#        previous = 0
-#        instances_list = []  # We cannot dynamically index arrays easily in JAX, so use Python list
-#
-#        norm_weights_host = backend.device_get(norm_weights) if hasattr(backend, 'device_get') else norm_weights
-#        for w in norm_weights_host:
-#            cumulative_sum += w
-#            current = int(backend.ceil(cumulative_sum))
-#            instances_list.append(current - previous)
-#            previous = current
-#
-#        instances = backend.array(instances_list, dtype=int)
-#
-#    # Step 3: Broadcast instances to all ranks
-#    if rank != 0:
-#        instances = backend.empty(total_n, dtype=int)
-#    comm.Bcast(
-#        instances if backend.__name__ == 'numpy' else backend.asarray(instances),
-#        root=0
-#    )
-#
-#    # Step 4: Determine global mapping of walkers after rebalancing
-#    new_total_walkers = backend.sum(instances).item()  # get scalar
-#    map_indices = backend.empty(new_total_walkers, dtype=int)
-#
-#    count = 0
-#    indices_list = []
-#    instances_host = backend.device_get(instances) if hasattr(backend, 'device_get') else instances
-#    for idx, num_instances in enumerate(instances_host):
-#        for _ in range(num_instances):
-#            indices_list.append(idx)
-#
-#    map_indices = backend.array(indices_list, dtype=int)
-#
-#    # Step 5: Distribute resampled walkers evenly back to ranks
-#    assert new_total_walkers == total_n, "Walker count mismatch after rebalancing."
-#
-#    all_mats_up = None
-#    if rank == 0:
-#        all_mats_up = backend.empty((total_n, N_orb, N_elec), dtype=config.complex_type)
-#    comm.Gather(
-#        walkers_mats_up if backend.__name__ == 'numpy' else backend.asarray(walkers_mats_up),
-#        all_mats_up,
-#        root=0
-#    )
-#
-#    resampled_mats_up = None
-#    if rank == 0:
-#        resampled_mats_up = all_mats_up[map_indices]
-#
-#    new_mats_up = backend.empty((local_n, N_orb, N_elec), dtype=config.complex_type)
-#    comm.Scatter(
-#        resampled_mats_up if backend.__name__ == 'numpy' else backend.asarray(resampled_mats_up),
-#        new_mats_up,
-#        root=0
-#    )
-#
-#    # Step 6: Reset weights uniformly
-#    new_weights = backend.ones(local_n, dtype=config.complex_type)
-#
-#    return new_mats_up, new_weights
-#
 
 
 

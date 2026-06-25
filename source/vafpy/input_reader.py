@@ -76,6 +76,8 @@ def read():
 
     afqmc.REBAL_PERIODICITY = inputs.get("REBPRI", 5)
 
+    afqmc.REBAL_METHOD = inputs.get("REBMTH", "Global")                       ### "Global" (across all MPI ranks) or "Local" (per-rank, rebalance_comb)
+
     afqmc.SAMP_FREQ =inputs.get("SMFRQ", 1) 
 
     afqmc.CHECK_PERIODICITY =inputs.get("CHPRI", 1000)
