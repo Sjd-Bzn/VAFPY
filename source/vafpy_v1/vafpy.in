@@ -26,7 +26,9 @@
                      
       METHOD IMPLEMENTATION:
       REOPRI   : 1
+      REOMTH   : QR        ### QR, Cholesky
       REBPRI   : 20
+      REBMTH   : Global    ### Global (across all MPI ranks), Local (per-rank, rebalance_comb)
       SMFRQ    : 5
       CHPRI    : 99999
 
