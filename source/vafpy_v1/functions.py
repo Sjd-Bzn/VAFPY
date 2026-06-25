@@ -982,7 +982,17 @@ def blockAverage(datastream, block_divisor):
         blockVar[blockCtr] = (np.var(obsProp)/(Nblock - 1))
         blockCtr += 1
     v = np.arange(minBlockSize,maxBlockSize)
-    return v, blockVar, blockMean
+
+    # The variance-of-the-mean curve should rise with block size and then
+    # plateau once the block size exceeds the autocorrelation time. Taking
+    # max(blockVar) over the whole curve is fragile: the largest block sizes
+    # have the fewest blocks left, so their variance estimate is itself the
+    # noisiest and can spike above the true plateau by chance. Use the
+    # median over the upper half of the curve instead, which is much less
+    # sensitive to a single noisy point while still reflecting the plateau.
+    plateau_var = np.median(blockVar[len(blockVar) // 2:])
+
+    return v, blockVar, blockMean, plateau_var
 
 
 

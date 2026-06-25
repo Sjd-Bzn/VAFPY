@@ -480,9 +480,10 @@ def main():
 
     file_out.close()
     weights_file.close()
+    elapsed_time = -start_time+time()
     if afqmc.first_cpu:
         print('Total number of rare events = ',rare_event_total_count)
-        print('total runtime = ', -start_time+time())
+        print('total runtime = ', elapsed_time)
         print('Please see', afqmc.output_file)
         #print('tot auxiliary time', tot_auxiliary_time)
         print('##########################')
@@ -494,13 +495,20 @@ def main():
     st = int(len(data)*afqmc.EQUILIBRATION)
     en = len(data)
     a = new.blockAverage(data[st:en], afqmc.block_divisor)
+    e_gs_afqmc = np.mean(data[st:en])
+    var_of_mean = a[3]
+    std_err = np.sqrt(var_of_mean)
+    correlation_energy = e_gs_afqmc - E_HF
+    correlation_length = 0.5 * (var_of_mean / a[1][0] - 1)
     if afqmc.first_cpu:
         print()
         print('Calculating ground state energy...')
         print()
-        print ('E_gs_afqmc = ', np.mean(data[st:en]), '+-', np.sqrt(max(a[1])))
+        print ('E_gs_afqmc = ', e_gs_afqmc, '+-', std_err)
         #print('Block mean = ', a[2])
-        print ('Correlation Energy = ', np.mean(data[st:en]) - E_HF)
+        print ('Correlation Energy = ', correlation_energy)
+        print ('Variance of the mean = ', var_of_mean)
+        print ('Correlation length = ', correlation_length)
         print('Total number of the rare event= ', rare_event_total_count)
         print('Numver of steps with rare events= ', rare_event_steps_count)
 
@@ -512,11 +520,14 @@ def main():
     with open("outcar.txt", "a") as outcar:
         if afqmc.first_cpu:
             outcar.write("Calculating ground state energy\n")
-            outcar.write(f"E_gs_afqmc = {np.mean(data[st:en])}\n")
-            outcar.write(f"+- {np.sqrt(max(a[1]))}\n")
-            outcar.write(f"Correlation Energy = {np.mean(data[st:en])} - E_HF \n")
+            outcar.write(f"E_gs_afqmc = {e_gs_afqmc}\n")
+            outcar.write(f"+- {std_err}\n")
+            outcar.write(f"Variance of the mean = {var_of_mean}\n")
+            outcar.write(f"Correlation length = {correlation_length}\n")
+            outcar.write(f"Correlation Energy = {correlation_energy}\n")
             outcar.write(f"Number of steps with rare events = {rare_event_steps_count}\n")
             outcar.write(f"Total number of rare events = {rare_event_total_count}\n")
+            outcar.write(f"Total elapsed time = {elapsed_time}\n")
 
 
     if afqmc.first_cpu:
