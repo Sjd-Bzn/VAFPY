@@ -72,6 +72,8 @@ def read():
 
     afqmc.REORTHO_PERIODICITY =inputs.get("REOPRI", 1)
 
+    afqmc.REORTHO_METHOD = inputs.get("REOMTH", "QR")                          ### "QR" or "Cholesky"
+
     afqmc.REBAL_PERIODICITY = inputs.get("REBPRI", 5)
 
     afqmc.SAMP_FREQ =inputs.get("SMFRQ", 1) 

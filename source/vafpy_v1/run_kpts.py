@@ -439,7 +439,10 @@ def main():
      
             if j%afqmc.REORTHO_PERIODICITY == 0:
                 #for i in range (0, NUM_WALKERS):
-                walkers.slater_det = new.reortho_qr(walkers.slater_det, config)
+                if afqmc.REORTHO_METHOD == "Cholesky":
+                    walkers.slater_det = new.cholesky_orthonormalize(walkers.slater_det, config)
+                else:
+                    walkers.slater_det = new.reortho_qr(walkers.slater_det, config)
                 #print('NUM_WALKERS = ', NUM_WALKERS)
             if afqmc.REBAL_PERIODICITY!=0 and j%afqmc.REBAL_PERIODICITY==0: 
                 #print("Rebalencing", flush = True )

@@ -955,6 +955,21 @@ def reortho_qr(walker_matrix, config):
     Q, R = config.backend.qr(walker_matrix)
     return Q
 
+
+def cholesky_orthonormalize(walker_matrix, config):
+    '''
+    Reorthogonalizes the columns of each walker via Cholesky decomposition of
+    the (num_electron x num_electron) Gram matrix A^H A, instead of a full QR
+    factorization of the (num_orbital x num_electron) matrix. Cheaper than QR
+    since Cholesky only operates on the much smaller Gram matrix. Backend
+    agnostic: works for NumPy, JAX, and CuPy via config.backend delegation.
+    '''
+    backend = config.backend
+    AhA = contract("wmi, wmj -> wij", backend.conj(walker_matrix), walker_matrix)
+    L = backend.linalg.cholesky(AhA)
+    Lh_inv = backend.linalg.inv(backend.swapaxes(backend.conj(L), -1, -2))
+    return contract("wmi, wij -> wmj", walker_matrix, Lh_inv)
+
 def init_walkers_weights( config):
     '''
     It initializes the weights.
