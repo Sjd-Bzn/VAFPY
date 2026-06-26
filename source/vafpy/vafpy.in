@@ -26,11 +26,11 @@
                      
       METHOD IMPLEMENTATION:
       REOPRI   : 1
-      REOMTH   : QR        ### QR, Cholesky
+      REOMTH   : Cholesky       ### QR, Cholesky
       REBPRI   : 20
       REBMTH   : Global    ### Global (across all MPI ranks), Local (per-rank, rebalance_comb)
       SMFRQ    : 5
-      CHPRI    : 99999
+      CHPRI    : 49999
 
       SINGULAR VALUE DECOMPOSITION and HATREE-FOCK:
       SVD      : False
@@ -41,4 +41,4 @@
       
       Config:
       PRECSION : Single   #### Double & Single
-      BACKEND  : NumPy     ####JAX
+      BACKEND  : JAX     ####JAX
