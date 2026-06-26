@@ -1,4 +1,5 @@
 import numpy as np
+import jax
 from mpi4py import MPI
 if MPI.COMM_WORLD.Get_rank() != 0:
     print = lambda *arg, **kwargs: None
@@ -382,6 +383,8 @@ def main():
     rare_event_total_count = 0   # Total number of walker-rare-events across all steps
     #tot_auxiliary_time = 0
     print("HF energy", e_hf)
+    if afqmc.first_cpu:
+        print("JAX devices:", jax.devices())
     while (j<afqmc.NUM_STEPS+1):
         update_time_st=time()
         #walkers.mats_up,walkers.weights = update_walker(PSI_T_up_0,PSI_T_up,walkers.mats_up,walkers.weights,ql,0,hamil.one_body,D_TAU,0,update_method)

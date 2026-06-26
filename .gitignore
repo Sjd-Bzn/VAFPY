@@ -11,3 +11,6 @@ source/run/*.npy
 # Python temporary/cache files
 __pycache__/
 *.pyc
+
+# Test/generated text outputs
+source/test/diamond/*.txt
