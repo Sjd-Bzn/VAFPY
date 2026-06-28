@@ -1,41 +1,48 @@
-      SYSTEM   : Diamond
+      SYSTEM   : Diamond_8k
 
       System Properties:
-      NGVEC    : 36
+      NGVEC    : 1644           #### from compress_H2.py output (threshold 1e-3)
       NEUP     : 4
-      EBANDS   : -20.16022842
+      EBANDS   : 0
       NEDOWN   : 4
       NORB     : 8
       EHZB     : 0
       ECONST   : 0
       SPIN     : 0
-      FSG      : 0
+      FSG      : 0.701728       #### intra-k (q=0) Madelung correction; computed as VASP_EXHF - ex_from_H2/nk = -418.97645251 - (-419.678180) = 0.701728 eV
 
       CONTROL PARAMETER FOR THIS RUN:
       PROPAG   : S2
-      EQLB     : 0.1
-      DTAU     : 0.005
-      NWAK     : 100
-      NSTP     : 20
-      BLKDIV   : 5
-      KPOINT   : 1
+      EQLB     : 0.2
+      DTAU     : 0.0001         #### small DTAU needed: h_sic has large neg diagonal for 8k
+      NWAK     : 50
+      NSTP     : 100
+      BLKDIV   : 10
+      KPOINT   : 8
       TMAX     : 184800
       OTEY     : 6
       TIMG     : 10
       TREL     : 10
       SEED     : 12345
 
+      DATA FILES:
+      H1FILE   : ~/projects/data/vafpy_v2/H1_svd.npy
+      H2FILE   : ~/projects/data/vafpy_v2/H2_zip.npy
+      QLIST    : ~/projects/data/vafpy_v2/Q_list.npy
+
       METHOD IMPLEMENTATION:
       UPDTM    : H
       REOPRI   : 1
-      REBPRI   : 5
+      REORTHO  : QR      #### QR or Cholesky (Cholesky requires JAX backend)
+      REBPRI   : 2
+      REBMTH   : local   #### local or global
       SMFRQ    : 1
-      CHPRI    : 39999
+      CHPRI    : 4999
 
       SINGULAR VALUE DECOMPOSITION and HATREE-FOCK:
       SVD      : False
       SVDT     : 1e-7
-      HF       : False
+      HF       : True           #### run HF test first
       HFTAU    : 1.0e-10
       HFSTP    : 1
 

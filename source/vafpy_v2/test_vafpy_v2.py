@@ -14,6 +14,15 @@ from scipy.linalg import expm, block_diag
 sys.path.insert(0, os.path.dirname(__file__))
 import functions as new
 
+# 1k (gamma-point) test data.
+# Override with env var AFQMC_DATA pointing to ~/projects/data (or equivalent).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_DATA_ROOT = os.environ.get(
+    "AFQMC_DATA",
+    os.path.normpath(os.path.join(_HERE, "..", "..", "..", "..", "data")),
+)
+TEST_DATA_DIR = os.path.join(_DATA_ROOT, "test", "diamond")
+
 
 def build_config(num_k, num_orb, num_e, num_g, num_walkers, dtau, propagator="S2"):
     backend = new.NumpyBackend(seed=12345)
@@ -84,9 +93,9 @@ def test_hf_energy_matches_opt():
     """HF energy components should match Code/opt to 1e-10."""
     config = build_config(num_k=1, num_orb=8, num_e=4, num_g=36,
                           num_walkers=10, dtau=0.005)
-    ql = new.obtain_Q_list(config, "Q_list.npy")
-    h1 = new.obtain_H1(config, "H1_svd.npy")
-    h2 = new.obtain_H2(config, "H2_zip.npy")
+    ql = new.obtain_Q_list(config, os.path.join(TEST_DATA_DIR, "Q_list.npy"))
+    h1 = new.obtain_H1(config, os.path.join(TEST_DATA_DIR, "H1_svd.npy"))
+    h2 = new.obtain_H2(config, os.path.join(TEST_DATA_DIR, "H2_zip.npy"))
     H = new.Hamiltonian(one_body=h1, two_body=h2, q_list=ql)
     trial, walkers = new.initialize_determinant(config)
     H.setup_energy_expressions(config, trial)
@@ -115,9 +124,9 @@ def test_propagator_matches_opt_with_fixed_field():
     num_g = 36
     config = build_config(num_k=1, num_orb=8, num_e=4, num_g=num_g,
                           num_walkers=num_walkers, dtau=0.005)
-    ql = new.obtain_Q_list(config, "Q_list.npy")
-    h1 = new.obtain_H1(config, "H1_svd.npy")
-    h2 = new.obtain_H2(config, "H2_zip.npy")
+    ql = new.obtain_Q_list(config, os.path.join(TEST_DATA_DIR, "Q_list.npy"))
+    h1 = new.obtain_H1(config, os.path.join(TEST_DATA_DIR, "H1_svd.npy"))
+    h2 = new.obtain_H2(config, os.path.join(TEST_DATA_DIR, "H2_zip.npy"))
     H = new.Hamiltonian(one_body=h1, two_body=h2, q_list=ql)
     trial, walkers = new.initialize_determinant(config)
     H.setup_energy_expressions(config, trial)
@@ -212,7 +221,7 @@ def test_qlist_loading_and_default():
     """Q_list.npy is consumed; default heuristic also works."""
     config = build_config(num_k=1, num_orb=8, num_e=4, num_g=36,
                           num_walkers=2, dtau=0.005)
-    ql = new.obtain_Q_list(config, "Q_list.npy")
+    ql = new.obtain_Q_list(config, "Q_list.npy")  # uses vafpy_v2 Q_list (any shape is fine here)
     assert ql.shape[1] == 3, ql.shape
     # heuristic fallback should produce something non-empty
     default_ql = new.build_default_q_list(4)
@@ -231,22 +240,24 @@ def test_multi_k_consistency():
     """
     cfg1 = build_config(num_k=1, num_orb=8, num_e=4, num_g=36,
                         num_walkers=5, dtau=0.005)
-    ql1 = new.obtain_Q_list(cfg1, "Q_list.npy")
-    h1_1 = new.obtain_H1(cfg1, "H1_svd.npy")
-    h2_1 = new.obtain_H2(cfg1, "H2_zip.npy")
+    ql1 = new.obtain_Q_list(cfg1, os.path.join(TEST_DATA_DIR, "Q_list.npy"))
+    h1_1 = new.obtain_H1(cfg1, os.path.join(TEST_DATA_DIR, "H1_svd.npy"))
+    h2_1 = new.obtain_H2(cfg1, os.path.join(TEST_DATA_DIR, "H2_zip.npy"))
     H1ham = new.Hamiltonian(one_body=h1_1, two_body=h2_1, q_list=ql1)
     trial1, walkers1 = new.initialize_determinant(cfg1)
     H1ham.setup_energy_expressions(cfg1, trial1)
     e1_total, _, _ = new.measure_energy(cfg1, trial1, walkers1, H1ham)
 
     # Build synthetic two-k inputs (independent copy of the same k-block).
-    h1_per_k = np.load("H1_svd.npy")  # (8, 8, 1)
+    h1_per_k = np.load(os.path.join(TEST_DATA_DIR, "H1_svd.npy"))  # (8, 8, 1)
     h1_two = np.zeros((8, 8, 2), dtype=h1_per_k.dtype)
-    h1_two[:, :, 0] = h1_per_k[:, :, 0]
-    h1_two[:, :, 1] = h1_per_k[:, :, 0]
+    # Each k-block must store h1_k / num_k (the production convention).
+    # The 1k test file stores h1_k/1; for num_k=2 each block needs h1_k/2.
+    h1_two[:, :, 0] = h1_per_k[:, :, 0] / 2
+    h1_two[:, :, 1] = h1_per_k[:, :, 0] / 2
     np.save("/tmp/H1_two.npy", h1_two)
 
-    h2_one = np.load("H2_zip.npy")  # (8, 8, 36)
+    h2_one = np.load(os.path.join(TEST_DATA_DIR, "H2_zip.npy"))  # (8, 8, 36)
     # Build block-diagonal (16, 16, 36*2 = 72) — independent fields per k.
     nb, _, ng = h2_one.shape
     h2_two = np.zeros((nb * 2, nb * 2, ng * 2), dtype=h2_one.dtype)

@@ -42,7 +42,9 @@ def read(path="vafpy.in"):
     # Method implementation
     afqmc.UPDATE_METHOD = inputs.get("UPDTM", "H")
     afqmc.REORTHO_PERIODICITY = inputs.get("REOPRI", 1)
+    afqmc.REORTHO_METHOD = inputs.get("REORTHO", "QR")   # QR or Cholesky
     afqmc.REBAL_PERIODICITY = inputs.get("REBPRI", 5)
+    afqmc.REBAL_METHOD = inputs.get("REBMTH", "local")   # local or global
     afqmc.SAMP_FREQ = inputs.get("SMFRQ", 1)
     afqmc.CHECK_PERIODICITY = inputs.get("CHPRI", 1000)
 

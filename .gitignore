@@ -4,10 +4,13 @@
 source/.vafpy/
 source/.venv/
 
-# Files generated during the run (from your previous status)
-source/run/*.txt 
-source/run/*.npy
+# Data / Hamiltonian files — stored outside the repo in ~/projects/data/
+*.npy
+outcar*.txt
+weights_history.txt
+AFQMC_CS_*.txt
 
 # Python temporary/cache files
 __pycache__/
 *.pyc
+*.egg-info/

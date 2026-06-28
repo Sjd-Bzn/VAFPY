@@ -1,4 +1,7 @@
 """AFQMC driver for vafpy_v2 (GPU/CPU + k-point support)."""
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import numpy as np
 from mpi4py import MPI
 if MPI.COMM_WORLD.Get_rank() != 0:
@@ -136,12 +139,23 @@ def main():
                     file_out.flush()
 
         if j % afqmc.REORTHO_PERIODICITY == 0:
-            walkers.slater_det = new.reortho_qr(config, walkers.slater_det)
+            if afqmc.REORTHO_METHOD == "Cholesky":
+                walkers.slater_det = new.cholesky_orthonormalize_complex_jax(walkers.slater_det)
+            else:
+                walkers.slater_det = new.reortho_qr(config, walkers.slater_det)
 
         if afqmc.REBAL_PERIODICITY != 0 and j % afqmc.REBAL_PERIODICITY == 0:
-            idx = new.rebalance_comb(config, walkers.weights)
-            walkers.slater_det = walkers.slater_det[idx]
-            walkers.weights = new.init_walkers_weights(config, NUM_WALKERS)
+            if afqmc.REBAL_METHOD == "global":
+                mats_np = config.backend.to_numpy(walkers.slater_det)
+                wts_np  = config.backend.to_numpy(walkers.weights)
+                mats_np, wts_np = new.rebalance_global(
+                    config.comm, mats_np, wts_np, config)
+                walkers.slater_det = config.backend.array(mats_np, dtype=config.complex_type)
+                walkers.weights    = config.backend.array(wts_np,  dtype=config.complex_type)
+            else:
+                idx = new.rebalance_comb(config, walkers.weights)
+                walkers.slater_det = walkers.slater_det[idx]
+                walkers.weights = new.init_walkers_weights(config, NUM_WALKERS)
 
         j += 1
 

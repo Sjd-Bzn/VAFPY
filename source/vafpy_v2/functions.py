@@ -186,6 +186,8 @@ class NumpyBackend(Backend):
 class JaxBackend(Backend):
     def __init__(self, seed):
         jax, jnp = _try_import_jax()
+        # Ampere/Ada GPUs use TF32 for matmuls by default; force full float32.
+        jax.config.update("jax_default_matmul_precision", "float32")
         super().__init__(jnp)
         self._jax = jax
         self._jnp = jnp
@@ -334,9 +336,7 @@ class Hamiltonian:
         self._exchange_expression = contract_expression(
             "wri, jrg, wpj, ipg -> w", *args, **kwargs
         )
-        self._singularity_correction = (
-            config.num_electron * config.num_kpoint * config.singularity
-        )
+        self._singularity_correction = config.singularity * config.num_kpoint  # FSG per unit cell; ×num_k cancels the /num_k in measure_components
 
         # Build / use Q_list for mean-field subtraction.
         if self.q_list is None:
@@ -355,7 +355,7 @@ class Hamiltonian:
         h_mf = H_1_mf(trial_single, trial_host, h2_host, h2_dag, ql,
                       h1_host, config.num_kpoint,
                       config.num_orbital, config.num_electron)
-        h_sic = -contract("ijG, kjG -> ik", h2_host, h2_dag) / 2
+        h_sic = -contract("ijG, jkG -> ik", h2_host, h2_dag) / 2
         h1_total = h_mf + h_sic   # H_1_mf already returns h1 + change/2
 
         # H_zero = sum of mean-field constant from L_0 (used in S2 propagator).
@@ -402,7 +402,7 @@ class Hamiltonian:
         return 2 * self._hartree_expression(theta, theta)
 
     def compute_exchange(self, theta):
-        return -self._exchange_expression(theta, theta)
+        return -self._exchange_expression(theta, theta) + self._singularity_correction
 
     def create_random_field(self, config):
         if self.test_random_field is None:
@@ -440,7 +440,7 @@ class Hamiltonian:
 # =========================================================================
 def obtain_H1(config, filename="H1_svd.npy"):
     """Load per-k H1 and assemble block-diagonal multi-k matrix."""
-    h1_per_k = np.load(filename).astype(np.complex128)
+    h1_per_k = np.load(os.path.expanduser(filename)).astype(np.complex128)
     # Expected shape (num_orb, num_orb, num_k) — what opt/vasp produce.
     if h1_per_k.ndim == 2:
         h1_per_k = h1_per_k[:, :, None]
@@ -450,12 +450,13 @@ def obtain_H1(config, filename="H1_svd.npy"):
 
 def obtain_H2(config, filename="H2_zip.npy"):
     """Load H2 in shape (num_orb*num_k, num_orb*num_k, num_g_total)."""
-    h2 = np.load(filename).astype(np.complex128)
+    h2 = np.load(os.path.expanduser(filename)).astype(np.complex128)
     return config.backend.array(h2, dtype=config.complex_type)
 
 
 def obtain_Q_list(config, filename="Q_list.npy"):
     """Load Q-list. Layout: rows are [K1, K2, Q]. Falls back to heuristic."""
+    filename = os.path.expanduser(filename)
     if not os.path.exists(filename):
         return build_default_q_list(config.num_kpoint)
     ql = np.load(filename)
@@ -498,7 +499,7 @@ def measure_energy(config, trial, walkers, hamiltonian):
     e1 = hamiltonian.compute_one_body(th)
     eh = hamiltonian.compute_hartree(th)
     ex = hamiltonian.compute_exchange(th)
-    energy = (e1 + eh + ex) / config.num_kpoint
+    energy = e1 + (eh + ex) / config.num_kpoint
     weighted_energy = energy @ walkers.weights
     sum_weights = config.backend.sum(walkers.weights)
     weighted_energy_global = config.comm.allreduce(weighted_energy)
@@ -510,6 +511,18 @@ def measure_energy(config, trial, walkers, hamiltonian):
     )
 
 
+def measure_hartree(config, trial, walkers, hamiltonian):
+    """Hartree energy averaged over walkers; used to compute h_0 for S2 propagator."""
+    th = biorthogonalize(config.backend, trial, walkers.slater_det)
+    energy_hartree = hamiltonian.compute_hartree(th)
+    energy = energy_hartree / config.num_kpoint
+    weighted_energy = energy @ walkers.weights
+    sum_weights = config.backend.sum(walkers.weights)
+    weighted_energy_global = config.comm.allreduce(weighted_energy)
+    sum_weights_global = config.comm.allreduce(sum_weights)
+    return weighted_energy_global / sum_weights_global
+
+
 def measure_components(config, trial, walkers, hamiltonian):
     """Returns (E_one, Hartree, Exchange) — useful for verification."""
     th = biorthogonalize(config.backend, trial, walkers.slater_det)
@@ -519,7 +532,7 @@ def measure_components(config, trial, walkers, hamiltonian):
     w = walkers.weights
     sumw = config.backend.sum(w)
     return (
-        (e1 @ w) / sumw / config.num_kpoint,
+        (e1 @ w) / sumw,
         (eh @ w) / sumw / config.num_kpoint,
         (ex @ w) / sumw / config.num_kpoint,
     )
@@ -537,8 +550,8 @@ def apply_taylor(config, matrix, slater_det):
 def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0):
     """One imaginary-time step of all walkers.
 
-    h_0 is the scalar factor exp(timestep * H_zero); e_0 is the running
-    energy estimate used in the importance reweighting.
+    h_0 = exp(dtau * H_zero) — scalar applied to the new walker determinant.
+    e_0 is the running energy estimate used in the importance reweighting.
     """
     new_walkers = Walkers(
         config.backend.zeros_like(walkers.slater_det),
@@ -578,7 +591,30 @@ def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0):
 # =========================================================================
 #  Re-orthogonalisation, weight rebalancing
 # =========================================================================
+def cholesky_orthonormalize_complex_jax(walkers):
+    """Orthonormalize walker columns via Cholesky decomposition (JAX / GPU path).
+
+    walkers: [batch, m, n] complex JAX array.
+    Computes Q such that Q^H Q = I using A^H A = L L^H, then Q = A (L^H)^{-1}.
+    Faster than QR on Ampere/Ada GPUs for large n.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    def ortho_single(A):
+        AhA = A.conj().T @ A                                    # [n, n]
+        L = jnp.linalg.cholesky(AhA)                           # [n, n]
+        Lh_inv = jnp.linalg.solve(L.conj().T,
+                                  jnp.eye(L.shape[-1], dtype=A.dtype))
+        return A @ Lh_inv                                       # [m, n]
+
+    return jax.vmap(ortho_single)(walkers)
+
+
 def reortho_qr(config, walker_matrix):
+    """Reorthogonalize walkers. Uses Cholesky on JAX (GPU-optimised), QR otherwise."""
+    if isinstance(config.backend, JaxBackend):
+        return cholesky_orthonormalize_complex_jax(walker_matrix)
     Q, _ = config.backend.qr(walker_matrix)
     return Q
 
@@ -587,8 +623,25 @@ def init_walkers_weights(config, n_walkers):
     return config.backend.ones(n_walkers, dtype=config.complex_type)
 
 
+def _rebalance_comb_jax(config, weights):
+    """Systematic resampling kept entirely on the JAX device (no CPU transfer)."""
+    import jax.numpy as jnp
+    c = config.backend.cumsum(weights.real)
+    N = len(c)
+    W = c[-1]
+    r = config.backend.random_uniform((), dtype=jnp.float32) * (W / N)
+    U = r + jnp.arange(N) * (W / N)
+    return jnp.searchsorted(c, U, side="left")
+
+
 def rebalance_comb(config, weights):
-    """Systematic resampling on a single rank; returns new walker indices."""
+    """Systematic resampling on a single rank; returns new walker indices.
+
+    Uses a GPU-resident path for JAX (avoids device→host transfer) and a
+    NumPy/CuPy path otherwise.
+    """
+    if isinstance(config.backend, JaxBackend):
+        return _rebalance_comb_jax(config, weights)
     w = config.backend.to_numpy(weights).real
     N = len(w)
     c = np.cumsum(w)
