@@ -1,0 +1,968 @@
+from dataclasses import dataclass
+import types
+from time import time
+import numpy as np
+import jax
+jax.config.update("jax_default_matmul_precision", "float32")
+import jax.numpy as jnp
+import scipy
+from mpi4py import MPI
+from opt_einsum import contract, contract_expression
+from scipy.linalg import expm
+from scipy.special import ndtri
+from scipy.stats import qmc
+
+
+
+
+
+@dataclass
+class HAMILTONIAN:
+    one_body: np.complex128
+    two_body: np.complex128
+@dataclass
+class HAMILTONIAN_MF:
+    zero_body: np.complex128
+    one_body: np.complex128
+    two_body_e: np.complex128
+    two_body_o: np.complex128
+
+def read_datafile(filename):
+    '''
+    Read the data from the given file into a numpy array.
+    '''
+    return np.load(filename)
+
+def reshape_H1(H1, num_k, num_orb):
+    '''
+    Reshape H1 (H1.npy shape is num_orb, num_orb, num_k
+    we implement the k_points to the H1)
+    '''
+    h1=np.zeros([num_orb*num_k,num_orb*num_k],dtype=np.complex128)
+    for i in range(0,num_k):
+        h1[i*num_orb:(i+1)*num_orb,i*num_orb:(i+1)*num_orb] = H1[:,:,i]
+    return h1
+
+def A_af_MF_sub(trial_0,trial,h2,q_list,num_k,num_orb,num_electrons_up, config):
+    '''
+    It returns two body Hamiltonian after mean-field subtraction.
+    '''
+    avg_A_mat = np.zeros_like(h2)
+    h2_shape = h2.shape
+    for Q in range(1,num_k+1):
+        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q,num_orb,num_electrons_up, config)
+        K1s_K2s = get_k1s_k2s(q_list,Q)
+        for K1,K2 in K1s_K2s:
+            for g in range(h2_shape[2]):
+                for r in range(num_orb):
+                    avg_A_mat[(K1-1)*num_orb+r][(K2-1)*num_orb+r][g]=avg_A_vec_Q[g]
+    return h2-avg_A_mat/num_electrons_up/2/num_k
+
+def avg_A_Q(trial_0,trial,h2,q_list,q_selected,num_orb,num_electrons_up, config):
+    '''
+    It returns average of two-body Hamiltonian for a specified Q.
+    '''
+    K1s_K2s = get_k1s_k2s(q_list,q_selected)
+    theta_full = theta(trial, trial)
+    h2_shape = h2.shape[2]
+    result = 1j*config.backend.zeros(h2_shape)
+    #result = 1j*cp.zeros(h2_shape)
+    for K1,K2 in K1s_K2s:
+        alpha = get_alpha_k1_k2(trial_0,h2,K1,K2,num_orb, config)
+        result += contract('iiG->G',contract('nrG,rm->nmG',alpha,theta_full[(K2-1)*num_orb:K2*num_orb,(K1-1)*num_electrons_up:K1*num_electrons_up]))
+    return 2*result
+
+def theta(trial, walker):
+    return np.dot(walker, np.linalg.inv(overlap(trial,walker)))
+
+def overlap(left_slater_det, right_slater_det):
+    '''
+    It computes the overlap between two Slater determinants.
+    '''
+    overlap_mat = np.dot(left_slater_det.transpose(),right_slater_det)
+    #overlap_mat = np.array([right_slater_det[num_orb*k:num_orb*k+num_electrons_up] for k in range(num_k)]).reshape(num_k*num_electrons_up,num_k*num_electrons_up)
+    return overlap_mat
+
+def get_k1s_k2s(q_list,q_selected):
+    '''
+    It retuirns a list of tuples (k1s,k2s) corrsponding to q_selected.
+    '''
+    return list(zip(get_q_list(q_list,q_selected)[:,0],get_q_list(q_list,q_selected)[:,1]))
+
+def get_q_list(q_list,q_selected):
+    '''
+    It returns q_list for a specicific momentum q_selected.
+    '''
+    return q_list[q_list[:,2]==q_selected]
+
+def mean_field( h2, num_elec, num_band, num_k):
+    mask = np.array(num_k * (num_elec * [True] + (num_band - num_elec) * [False]))
+    m = np.sum(h2[mask,mask], axis=0)
+    #m = np.einsum("iig->g", H2[mask][:,mask])
+    #m = np.linalg.det( h2[:num_elec, : num_elec].T)
+    return m
+
+def get_alpha_k1_k2(trial_0,h2,k1_idx,k2_idx,num_orb, config):                                                               #####! it doesnt use mean field subtraction
+    '''
+    It returns alpha to be used as an intermediate object to compute one-body reduced density tensors.
+    '''
+    A_Q = get_A_k1_k2(h2,k1_idx,k2_idx,num_orb)
+    result = config.backend.einsum('ip,prG->irG',trial_0.T,A_Q)
+    return result
+
+def get_A_k1_k2(h2,k1_idx,k2_idx, num_orb):
+    '''
+    It returns the selected block of h2.
+    '''
+    return h2[(k1_idx-1)*num_orb:k1_idx*num_orb,(k2_idx-1)*num_orb:k2_idx*num_orb,:]
+
+def H_1_mf(trial_0,trial,h2,h2_dagger,q_list,h1,num_k,num_orb,num_electrons_up, config):
+    '''
+    It returns one-body part of the Hamiltonian after mean-field subtraction.
+    '''
+    change = 1j*np.zeros_like(h1)
+    for Q in range(1,num_k+1):
+        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q,num_orb,num_electrons_up, config)
+        avg_A_vec_Q_dagger = avg_A_Q(trial_0,trial,h2_dagger,q_list,Q,num_orb,num_electrons_up, config)
+        K1s_K2s = get_k1s_k2s(q_list,Q)
+        for K1,K2 in K1s_K2s:
+            change[(K1-1)*num_orb:K1*num_orb,(K2-1)*num_orb:K2*num_orb] = contract('rpG->rp',contract('G,rpG->rpG',avg_A_vec_Q_dagger,h2[(K1-1)*num_orb:K1*num_orb,(K2-1)*num_orb:K2*num_orb,:])+contract('G,rpG->rpG',avg_A_vec_Q,h2_dagger[(K1-1)*num_orb:K1*num_orb,(K2-1)*num_orb:K2*num_orb,:]))
+    return h1+change/2
+
+def gen_A_e_full(h2):
+    '''
+    It generates A_e.
+    '''
+    a_e = (h2 + np.einsum('ijG->jiG', h2.conj()))/2
+    return a_e
+
+def gen_A_o_full(h2):
+    '''
+    It generates A_o.
+    '''
+    a_o = (h2 - np.einsum('ijG->jiG', h2.conj()))*1j/2
+    return a_o
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#def reshape_H1(H1, num_k, num_orb):
+#    '''
+#    Reshape H1 (H1.npy shape is num_orb, num_orb, num_k
+#    we implement the k_points to the H1)
+#    '''
+#    h1=np.zeros([num_orb*num_k,num_orb*num_k],dtype=np.complex128)
+#    for i in range(0,num_k):
+#        h1[i*num_orb:(i+1)*num_orb,i*num_orb:(i+1)*num_orb] = H1[:,:,i]
+#    return h1
+
+#def A_af_MF_sub(trial_0,trial,h2,q_list,num_k,num_orb,num_electrons_up, config):
+#    '''
+#    It returns two body Hamiltonian after mean-field subtraction.
+#    '''
+#    avg_A_mat = config.backend.zeros_like(h2)
+#    h2_shape = h2.shape
+#    for Q in range(1,num_k+1):
+#        avg_A_vec_Q = avg_A_Q(trial_0,trial,h2,q_list,Q,num_orb,num_electrons_up, config)
+#        K1s_K2s = get_k1s_k2s(q_list,Q)
+#        for K1,K2 in K1s_K2s:
+#            for g in range(h2_shape[2]):
+#                for r in range(num_orb):
+#                    if config.backend.__name__ == "jax.numpy":
+#                        avg_A_mat = avg_A_mat.at[(K1-1)*num_orb+r,(K2-1)*num_orb+r, g].set(avg_A_vec_Q[g])
+#                    else:
+#                        avg_A_mat[(K1 - 1) * num_orb + r][(K2 - 1) * num_orb + r][g] = avg_A_vec_Q[g]
+#    return h2-avg_A_mat/num_electrons_up/2/num_k
+
+
+
+#def theta(config, trial, slater_det):
+#    overl = overlap(config, trial, slater_det)
+#
+#    if config.backend.__name__ == "jax.numpy":
+#        # Use CuPy for stable GPU-based matrix inversion
+#        overl_cp = cp.asarray(overl)
+#        slater_cp = cp.asarray(slater_det)
+#        inv_cp = cp.linalg.inv(overl_cp)
+#        result_cp = cp.matmul(slater_cp, inv_cp)
+#
+#        # Convert CuPy result back to JAX
+#        result_jnp = jax.device_put(cp.asnumpy(result_cp))
+#        return result_jnp
+#
+#    else:
+#        # Use backend-provided inversion (NumPy, CuPy, etc.)
+#        inverse_overlap = config.backend.linalg.inv(overl)
+#        return config.backend.dot(slater_det, inverse_overlap)
+
+
+
+#def theta(config, trial, walker):
+#    ovlp = overlap(config, trial, walker)
+#    return jax.scipy.linalg.solve(ovlp, walker.T).T
+
+
+#def theta(config, trial, slater_det):
+#    inverse_overlap = config.backend.linalg.inv(trial.T @ slater_det)
+#    return contract("wpi, wij -> wpj", slater_det, inverse_overlap)
+
+
+
+def main(precision, backend):
+    #print()
+   # max_seed = np.iinfo(np.int32).max
+   # seed = np.random.randint(max_seed)
+    if backend == "numpy":
+        backend = NumpyBackend(seed)
+    elif backend == "jax":
+        backend = JaxBackend(seed)
+    elif backend == "cupy":
+        backend = CupyBackend(seed)
+    else:
+        raise NotImplementedError(f"Selected {backend=} not implemented!")
+    config = Configuration(
+        num_walkers=10,
+        num_kpoint=1,
+        num_orbital=8,
+        num_electron=4,
+        num_g = 12039,
+        singularity=0,
+        propagator="S2",
+        order_propagation=6,
+        timestep=0.00075,
+        comm=MPI.COMM_WORLD,
+        precision=precision,
+        backend=backend,
+    )
+    hamiltonian = Hamiltonian(
+        one_body=obtain_H1(config),
+        two_body=obtain_H2(config),
+    )
+    trial_det, walkers = initialize_determinant(config)
+    hamiltonian.setup_energy_expressions(config, trial_det)
+
+    #np.random.seed(34841311)
+    #x_e_Q = np.random.randn(config.num_g, config.num_walkers)
+    #x_o_Q = np.random.randn(config.num_g, config.num_walkers)
+    x_e_Qs = x_e_Q.astype(np.single)
+    x_o_Qs = x_o_Q.astype(np.single)
+    hamiltonian.test_random_field = np.concatenate((x_e_Qs, x_o_Qs), axis=0)
+
+    expected_slater_det = np.load("slater_det.npy")
+    expected_weights = np.load("weights.npy")
+    new_walkers = propagate_walkers(config, trial_det, walkers, hamiltonian)
+    check_det = np.allclose(new_walkers.slater_det, expected_slater_det, atol=1e-7)
+    check_weight = np.allclose(new_walkers.weights, expected_weights)
+    print("propagate_walkers", check_det, check_weight)
+    print(new_walkers.slater_det.dtype, new_walkers.slater_det.__class__)
+    print(new_walkers.weights.dtype, new_walkers.weights.__class__)
+
+    E_hf = measure_energy(config, trial_det, walkers, hamiltonian)
+    expected = 631.88947 - 2.8974954e-09j
+    check_hf = np.isclose(E_hf, expected)
+    #np.random.seed(1887431)
+    #random_change = config.backend.array(np.random.rand(*walkers.slater_det.shape))
+    walkers.slater_det += 0.05 * random_change.astype(config.complex_type)
+    E_random = measure_energy(config, trial_det, walkers, hamiltonian)
+    expected = 631.8965 - 0.009482565j
+    check_random = np.isclose(E_random, expected)
+    print("measure_energy", check_hf, check_random)
+    print(E_hf, E_hf.dtype, E_hf.__class__)
+    print(E_random, E_random.dtype, E_random.__class__)
+
+
+class Backend:
+    def __init__(self, module):
+        self._module = module
+
+    def __getattr__(self, name):
+        return getattr(self._module, name)
+
+class JaxBackend(Backend):
+    def __init__(self, seed):
+        super().__init__(jnp)
+        #self.block_diag = jax.scipy.linalg.block_diag
+        self._key = jax.random.key(seed)
+        #self.expm = jax.scipy.linalg.expm
+        self.linalg = jnp.linalg
+    
+    def block_diag(self, *matrices):
+        matrix_copy = [np.asarray(matrix) for matrix in matrices]
+        matrix = scipy.linalg.block_diag(*matrix_copy)
+        return jnp.array(matrix)
+
+    def expm(self, matrix):
+        result = scipy.linalg.expm(matrix)
+        return jnp.array(result)
+
+    def cumsum(self, x):
+        return jnp.cumsum(x)
+    
+
+    def qr(self, matrix):
+        return jax.numpy.linalg.qr(matrix)
+    
+    def random_normal(self, shape, dtype):
+        self._key, subkey = jax.random.split(self._key)
+        return jax.random.normal(subkey, shape, dtype)
+
+    def random_uniform(self, shape, dtype):
+        self._key, subkey = jax.random.split(self._key)
+        return jax.random.uniform(subkey, shape, dtype=dtype)
+    
+    def random_uniform_scalar(self, dtype):
+        self._key, subkey = jax.random.split(self._key)
+        return jax.random.uniform(subkey, shape=(), dtype=dtype)
+
+
+
+class NumpyBackend(Backend):
+    def __init__(self, seed):
+        super().__init__(np)
+        self.block_diag = scipy.linalg.block_diag
+        self.expm = scipy.linalg.expm
+        self._generator_1 = np.random.default_rng(seed)
+        #self._generator_2 = np.random.default_rng(seed)
+         
+    def cumsum(self, x):
+        return np.cumsum(x)
+    
+    def random_normal(self, shape, dtype):
+        #a = self._generator_1.standard_normal(shape, dtype)
+        #b = self._generator_2.standard_normal(shape, dtype)
+        #print(np.allclose(a, b))
+        return self._generator_1.standard_normal(shape).astype(dtype)
+    
+    def random_uniform(self, shape, dtype):
+        return self._generator_1.uniform(size=shape).astype(dtype)
+    
+    def random_uniform_scalar(self, dtype):
+        return dtype(self._generator_1.uniform(0, 1))
+
+    def qr(self, matrix):
+        return np.linalg.qr(matrix)
+    
+
+class CupyBackend(Backend):
+    def __init__(self, seed):
+        global cp
+        import cupy as cp
+        super().__init__(cp)
+        self._generator = cp.random.default_rng(seed)
+
+    def block_diag(self, *matrices):
+        matrix_copies = (matrix.get() for matrix in matrices)
+        matrix = scipy.linalg.block_diag(*matrix_copies)
+        return cp.array(matrix)
+
+    def expm(self, matrix):
+        exp_matrix = scipy.linalg.expm(matrix.get())
+        return cp.array(exp_matrix)
+
+    def cumsum(self, x):
+        return cp.cumsum(x)
+
+    def qr(self, matrix):
+        return cp.linalg.qr(matrix)
+    
+
+
+    def random_normal(self, shape, dtype):
+        return self._generator.standard_normal(shape).astype(dtype)
+
+    def random_uniform(self, shape, dtype):
+        return self._generator.uniform(size=shape).astype(dtype)
+
+    def random_uniform_scalar(self, dtype):
+        return self._generator.uniform(0, 1, size=()).astype(dtype)
+
+
+@dataclass
+class Configuration:
+    num_walkers: int  # number of walkers per core
+    num_kpoint: int  # number of k-points to sample the Brillouin zone
+    num_orbital: int  # size of the basis
+    num_electron: int  # number of occupied states
+    num_g: int  # number of points in the factorization
+    singularity: float  # singularity used for the G=0 component (fsg)
+    propagator: str  # select which method to use to propagate in time
+    order_propagation: int  # number of times the Hamiltonian is applied in propagator
+    timestep: float  # imaginary time passing between two steps
+    comm: MPI.Comm  # communicator over which the walkers are distributed
+    precision: str  # must be either single or double
+    backend: types.ModuleType  # module used to execute numpy-like operations
+    use_sobol: bool = False   # use Randomized QMC (Sobol + random shift) for auxiliary fields
+    sobol_seed: int = 0       # base seed for Sobol engine and shift RNG (add rank for MPI)
+
+    @property
+    def float_type(self):
+        if self.precision == "Single":
+            return self.backend.single
+        elif self.precision == "Double":
+            return self.backend.double
+        else:
+            raise NotImplementedError(self._precision_error_message())
+
+    @property
+    def complex_type(self):
+        if self.precision == "Single":
+            return self.backend.csingle
+        elif self.precision == "Double":
+            return self.backend.cdouble
+        else:
+            raise NotImplementedError(self._precision_error_message())
+
+    def _precision_error_message(self):
+        return f"Specified precision '{self.precision}' not implemented."
+    
+####### just for rebalencing
+    @property
+    def int_type(self):
+        return self.backend.int32
+
+@dataclass
+class Walkers:
+    slater_det: np.typing.ArrayLike
+    weights: np.typing.ArrayLike
+
+
+@dataclass
+class Hamiltonian:
+    one_body: np.typing.ArrayLike
+    # one-body part of Hamiltonian, expected shape (num_orbital, num_orbital, num_kpoint)
+    two_body: np.typing.ArrayLike
+    # two-body part of Hamiltonian after factorization,
+    # expected shape (num_orbital, num_orbital * num_kpoint, num_g * num_kpoint)
+    test_random_field: np.typing.ArrayLike = None  # a random field used for testing
+
+    def setup_energy_expressions(self, config, trial_det):
+        shape_theta = (
+            config.num_walkers,
+            config.num_orbital * config.num_kpoint,
+            config.num_electron * config.num_kpoint,
+        )
+        h1_trial = trial_det.T @ self.one_body
+        alpha = contract("pi, prg -> irg", trial_det, self.two_body)
+        alpha_T = contract("pi, rpg -> irg", trial_det, self.two_body.conj())
+        self._one_body_expression = contract_expression(
+            "ip, wpi -> w", h1_trial, shape_theta, constants=[0], optimize="greedy"
+        )
+        args = (shape_theta, alpha, shape_theta, alpha_T)
+        kwargs = {"constants": [1, 3], "optimize": "greedy"}
+        self._hartree_expression = contract_expression(
+            "wri, irg, wpj, jpg -> w", *args, **kwargs
+        )
+        self._exchange_expression = contract_expression(
+            "wri, jrg, wpj, ipg -> w", *args, **kwargs
+        )
+        self._singularity_correction = (
+            config.num_electron * config.num_kpoint * config.singularity
+        )
+
+        ql = []
+        for i in range(1,config.num_kpoint+1):
+            for j in range(1,config.num_kpoint+1):
+                for k in range(1,config.num_kpoint+1):
+                    if abs(i-j)==k-1:
+                        ql.append([i,j,k])
+        ql = np.array(ql)
+
+        h_mf = self.compute_mean_field_one_body(config, trial_det, ql)
+        h_sic = -contract('ijG, kjG -> ik', self.two_body, self.two_body.conj()) / 2
+        h1 = self.one_body.astype(config.complex_type) + h_mf + h_sic
+        #print("h_mf", h_mf)
+        #print("h_sic", h_sic)
+        self._h1 = -h1 * config.timestep
+        self._exp_h1 = config.backend.expm(-h1 * config.timestep)
+        self._exp_h1_half = config.backend.expm(-0.5 * h1 * config.timestep)
+        two_body = self.compute_mean_field_two_body(config, trial_det, ql)
+        #print("two_body", two_body.__class__) 
+        alpha = contract("pi, prg -> irg", trial_det, two_body)
+        self._sqrt_tau = config.backend.sqrt(config.timestep).astype(config.float_type)
+        self._force_bias_expression = contract_expression(
+            'wri, irg -> gw',
+            (config.num_walkers, config.num_orbital * config.num_kpoint, config.num_electron * config.num_kpoint),
+            alpha,
+            constants=[1],
+            optimize='greedy'
+        )
+        self._auxiliary_field = contract_expression(
+            'ijg, gw -> ijw',
+            two_body,
+            (2 * config.num_g, config.num_walkers),
+            constants=[0],
+            optimize='greedy'
+        )
+        # Sobol RQMC initialisation (no-op when use_sobol=False)
+        self._sobol_base = None
+        self._sobol_shift_rng = None
+        if config.use_sobol:
+            self._setup_rqmc(config)
+
+    def _setup_rqmc(self, config):
+        # Proposal eq. (24): generate base set S in [0,1]^{Nw x g} ONCE at init.
+        # At each step: fresh shift Delta^(n) + random permutation pi_n of walkers
+        # breaks persistent walker-to-Sobol-point coupling across population control.
+        d = 2 * config.num_g
+        N = config.num_walkers
+        m = max(1, int(np.ceil(np.log2(max(N, 2)))))
+        engine = qmc.Sobol(d=d, scramble=True, seed=config.sobol_seed)
+        pts = engine.random_base2(m)[:N]                    # (N, d) float64
+        self._sobol_base = np.ascontiguousarray(pts.T)      # (d, N) float64
+        self._sobol_shift_rng = np.random.default_rng(config.sobol_seed + 99991)
+
+    def compute_one_body(self, theta):
+        return 2 * self._one_body_expression(theta)
+
+    def compute_hartree(self, theta):
+        a = 2 * self._hartree_expression(theta, theta)
+    #    print('a',a)
+        return a
+    def compute_exchange(self, theta):
+        return -self._exchange_expression(theta, theta) #- self._singularity_correction
+
+    def create_auxiliary_field(self, config, theta):
+#        st_time = time()
+        random_field = self.create_random_field(config)
+        force_bias = -2j * self._sqrt_tau * self._force_bias_expression(theta)
+        # Boundary condition for rare events based on: https://doi.org/10.1103/PhysRevB.80.214116
+        force_bias = config.backend.where(abs(force_bias) > 1, 0.0, force_bias)
+        arg = contract("gw, gw -> w", random_field - 0.5 * force_bias, force_bias)
+        field = 1j * self._sqrt_tau * self._auxiliary_field(random_field - force_bias)
+ #       fi_time = time()
+  #      print("Aux time" ,st_time - fi_time)
+        return field, config.backend.exp(arg)
+
+    def create_random_field(self, config):
+        if self.test_random_field is not None:
+            return self.test_random_field
+
+        if self._sobol_base is not None:
+            # Proposal eq. (14): U^(n)_{w,γ} = (S_{π(w),γ} + Δ^(n)_γ) mod 1
+            N = self._sobol_base.shape[1]
+            perm  = self._sobol_shift_rng.permutation(N)             # random π_n
+            shift = self._sobol_shift_rng.uniform(size=(self._sobol_base.shape[0], 1))
+            shifted = (self._sobol_base[:, perm] + shift) % 1.0      # (d, N) float64
+            np.clip(shifted, 1e-12, 1 - 1e-12, out=shifted)
+            normals = ndtri(shifted)                                  # (d, N) float64
+            dtype = np.float32 if config.precision == "Single" else np.float64
+            return config.backend.array(normals.astype(dtype))
+
+        shape = (2 * config.num_g, config.num_walkers)
+        return config.backend.random_normal(shape, config.float_type)
+
+    def compute_mean_field_one_body(self, config, trial_det, ql):
+        # interface to legacy code
+        h2_t = contract('prG->rpG', self.two_body.conj())
+        h1_legacy = H_1_mf(trial_det,trial_det,self.two_body,h2_t,ql,self.one_body,config.num_kpoint,config.num_orbital,config.num_electron, config)
+        result = h1_legacy - self.one_body
+        return config.backend.array(result, dtype=config.complex_type)
+
+    def compute_mean_field_two_body(self, config, trial_det, ql):
+        # interface to legacy code
+        h2_af_MF_sub = A_af_MF_sub(trial_det,trial_det,self.two_body,ql,config.num_kpoint,config.num_orbital,config.num_electron, config)
+        two_body_e = gen_A_e_full(h2_af_MF_sub)
+        two_body_o = gen_A_o_full(h2_af_MF_sub)
+        result = config.backend.concatenate(
+        (config.backend.array(two_body_e, dtype=config.complex_type),
+        config.backend.array(two_body_o, dtype=config.complex_type)),
+        axis=-1)
+
+        return result
+
+
+        #result = np.concatenate((two_body_e, two_body_o), axis=-1)
+        #return config.backend.array(result, dtype=config.complex_type)
+
+    
+    def exp_h0( config, theta):
+        a =   compute_hartree( theta) / (2*config.num_electron)
+        print("a",a)
+        b = config.backend.exp(config.timestep*a)
+        print("b",b)
+        return b
+
+    @property
+    def h1(self):
+        return self._h1
+
+    @property
+    def exp_h1(self):
+        return self._exp_h1
+
+    @property
+    def exp_h1_half(self):
+        return self._exp_h1_half
+
+
+def obtain_H1(config):
+    """
+    Reshape H1 (H1.npy shape is num_orb, num_orb, num_k
+    we implement the k_points to the H1)
+    """
+    input_h1 = config.backend.load("H1_svd.npy").astype(config.complex_type)
+    output_h1 = config.backend.moveaxis(input_h1, -1, 0)
+    return config.backend.block_diag(*output_h1)
+
+
+def obtain_H2(config):
+    input_h2 = config.backend.load("H2_zip.npy").astype(config.complex_type)
+    return input_h2
+
+def initialize_determinant(config):
+    shape = (config.num_orbital, config.num_electron)
+    trial_det = config.backend.eye(*shape, dtype=config.float_type)
+    slater_det = config.backend.array(config.num_walkers * [trial_det])
+    walkers = Walkers(
+        slater_det=slater_det.astype(config.complex_type),
+        weights=config.backend.ones(config.num_walkers, dtype=config.complex_type),
+    )
+    return trial_det, walkers
+
+
+def measure_energy(config, trial, walkers, hamiltonian):
+    # compute energies locally
+    theta = biorthogonalize(config.backend, trial, walkers.slater_det)
+    energy_one_body = hamiltonian.compute_one_body(theta)
+    energy_hartree = hamiltonian.compute_hartree(theta)
+    energy_exchange = hamiltonian.compute_exchange(theta)
+    energy = (energy_one_body + energy_hartree + energy_exchange) / config.num_kpoint
+    weighted_energy = energy @ walkers.weights
+
+    # average over all ranks
+    sum_weights = config.backend.sum(walkers.weights)
+    e1_avg = (energy_one_body / config.num_kpoint) @ walkers.weights / sum_weights
+    hartree_avg = (energy_hartree / config.num_kpoint) @ walkers.weights / sum_weights
+    exchange_avg = (energy_exchange / config.num_kpoint) @ walkers.weights / sum_weights
+    return weighted_energy / sum_weights, weighted_energy, sum_weights, e1_avg, hartree_avg, exchange_avg
+
+def measure_hartree(config, trial, walkers, hamiltonian):
+    # compute energies locally
+    theta = biorthogonalize(config.backend, trial, walkers.slater_det)
+    energy_hartree = hamiltonian.compute_hartree(theta)
+    energy = ( energy_hartree ) / config.num_kpoint
+    weighted_energy = energy @ walkers.weights
+
+    # average over all ranks
+    sum_weights = config.backend.sum(walkers.weights)
+    weighted_energy_global = config.comm.allreduce(weighted_energy)
+    sum_weights_global = config.comm.allreduce(sum_weights)
+    return weighted_energy_global / sum_weights_global
+
+
+#tot_aux_time = 0
+def propagate_walkers(config, trial, walkers, hamiltonian, h0, e_0):
+    new_walkers = Walkers(config.backend.zeros_like(walkers.slater_det), config.backend.zeros_like(walkers.weights))
+    theta = biorthogonalize(config.backend, trial, walkers.slater_det)
+    #print("theta", theta.shape)
+    h2, importance = hamiltonian.create_auxiliary_field(config, theta)
+    #tot_aux_time += au_time
+    #print("h2", h2.shape)
+    num_rare_event = 0
+#    print('h_2 type', h2.dtype, h2.__class__)
+
+    if config.propagator == "Taylor":
+        h = hamiltonian.h1 + h2
+        full_step_with_h1_and_h2 = apply_taylor(config, h, walkers.slater_det)
+        new_walkers.slater_det = hamiltonian.exp_h0 * full_step_with_h1_and_h2
+
+    elif config.propagator == "S1":
+        full_step_with_h2 = apply_taylor(config, h2, half_step_with_h1)
+        full_step_with_h1 = hamiltonian.exp_h1 @ full_step_with_h2
+        new_walkers.slater_det = hamiltonian.exp_h0 * full_step_with_h1
+
+    elif config.propagator == "S2":
+        half_step_with_h1 = hamiltonian.exp_h1_half @ walkers.slater_det
+        #print("half_step_with_h1" ,half_step_with_h1.shape) 
+        full_step_with_h2 = apply_taylor(config, h2, half_step_with_h1)
+        half_step_with_h1 = hamiltonian.exp_h1_half @ full_step_with_h2
+        new_walkers.slater_det = half_step_with_h1 * h0
+      #  print("walker", new_walkers.slater_det.shape)
+        #print("h0", hamiltonian.exp_h0.shape)  
+    else:
+        raise ValueError("Invalid method selected. Choose from 'taylor', 'S1', or 'S2'.")
+
+    new_overlap = project_trial(config.backend, trial, new_walkers.slater_det)
+    old_overlap = project_trial(config.backend, trial, walkers.slater_det)
+    overlap_ratio = new_overlap / old_overlap
+    cos_alpha = config.backend.cos(config.backend.angle(overlap_ratio))
+    factor = abs(overlap_ratio * importance * (config.backend.exp(config.timestep*e_0)))
+
+    factor = config.backend.where(factor < 10, factor, 0)  # Fixes ambiguous truth value issue
+    #print("factor", np.mean(factor))
+    num_rare_event += config.backend.sum(factor == 0)  # Count number of events where factor was reset
+    #if np.all(np.abs(factor) < 10):
+   #     factor = factor
+   # else:
+   #     factor = 0
+   #     num_rare_event += 1
+    a = abs(factor)* config.backend.maximum(0, cos_alpha)
+    new_walkers.weights = a * walkers.weights
+
+    return new_walkers, num_rare_event
+
+
+def apply_taylor(config, matrix, slater_det):
+    result = slater_det.copy()
+    addend = slater_det
+    for i in range(config.order_propagation):
+        # addend = contract("pq, qi -> pi", matrix , addend) / (i + 1)
+        addend = contract("pqw, wqi -> wpi", matrix , addend) / (i + 1)
+        result += addend
+    return result
+
+#def biorthogonalize(backend, trial, slater_det):
+#    print("trial", trial.shape)
+#    print("slater", slater_det.shape)
+#    inverse_overlap = backend.linalg.inv(trial.T @ slater_det)
+#    print("inv", inverse_overlap.shape)
+#    return contract("wpi, wij -> wpj", slater_det, inverse_overlap)
+#def biorthogonalize(backend, trial, slater_det):
+#    # trial: (n, p), slater_det: (w, n, p)
+#    print("trial", trial.shape)
+#    print("slater", slater_det.shape)
+#
+#    trial_H = backend.swapaxes(trial, -1, -2).conj()      # (p, n)
+#    trial_H = backend.expand_dims(trial_H, axis=0)        # (1, p, n)
+#    trial_H = backend.broadcast_to(trial_H, (slater_det.shape[0], *trial_H.shape[1:]))  # (w, p, n)
+#
+#    overlap = backend.matmul(trial_H, slater_det)         # (w, p, p)
+#    inverse_overlap = backend.linalg.inv(overlap)         # (w, p, p)
+#    print("inv", inverse_overlap.shape)
+#
+#    return contract("wip, wpq -> wiq", slater_det, inverse_overlap)
+
+
+def biorthogonalize(backend, trial, slater_det):
+    
+    overlap = (trial.T @ slater_det)  
+    inverse_overlap = backend.linalg.inv(overlap)
+    return contract("wpi, wij -> wpj", slater_det, inverse_overlap)
+
+
+#def biorthogonalize(backend, trial, slater_det):
+#    #print("trial", trial.shape)
+#    #print("slater", slater_det.shape)
+#
+#    if backend.__name__ == "jax.numpy":
+#        # trial: (n, p), slater_det: (w, n, p)
+#        def compute_inverse(slater_slice):
+#            overlap = trial.T.conj() @ slater_slice  # (p, p)
+#            return jnp.linalg.inv(overlap)
+#
+#        inv_batch = vmap(compute_inverse)(slater_det)  # (w, p, p)
+#
+#        # Compute final contraction
+#        theta = jnp.einsum("wip, wpq -> wiq", slater_det, inv_batch)
+#     #   print("inv", inv_batch.shape)
+#     #   print("theta", theta.shape)
+#        return theta
+#
+#    else:
+#        inverse_overlap = backend.linalg.inv(trial.T @ slater_det)
+#        return contract("wpi, wij -> wpj", slater_det, inverse_overlap)
+
+def project_trial(backend, trial, slater_det):
+    overlap = trial.T @ slater_det
+    return backend.linalg.det(overlap)**2
+
+
+def rebalance_comb(config, weights):
+    """
+    Rebalances weights using systematic (stratified) resampling.
+    Returns an array of new walker indices (length = N).
+    """
+    N = len(weights)
+    c = config.backend.cumsum(weights.real)
+    W = c[-1]            # total weight
+    # random offset in [0, W/N)
+    #r = config.backend.random_uniform(0, W/N)
+        
+    # Random offset r in [0, W/N)
+    r = (W / N) * config.backend.random_uniform_scalar(dtype=config.float_type)
+    
+    new_indices = config.backend.zeros(N, dtype=config.int_type)
+
+    # pointer for searching in c
+    i = 0
+    for k in range(N):
+        U = r + k*(W/N)
+        # Move i forward until c[i] >= U
+        while U > c[i]:
+            i += 1
+        new_indices[k] = i
+
+    return new_indices
+
+
+
+
+
+
+def _to_host(array):
+    '''
+    Converts a backend-native array to a host NumPy array. np.asarray works
+    for NumPy and JAX, but CuPy deliberately blocks implicit conversion
+    (it has a .get() method instead) to avoid silent device-to-host copies.
+    '''
+    return array.get() if hasattr(array, "get") else np.asarray(array)
+
+
+def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
+    '''
+    Resamples the walker population across ALL MPI ranks (not just locally),
+    pooling every rank's walkers into one population before resampling via
+    systematic (stratified) resampling. This matters when the per-rank
+    walker count is small or has had an unlucky run: purely local resampling
+    (rebalance_comb) can never borrow a high-weight walker from another rank.
+
+    Backend agnostic: mpi4py's Gather/Bcast/Scatter need real NumPy buffers,
+    so all bookkeeping happens on host NumPy arrays, with conversion back to
+    the active backend only for the returned walker matrix.
+    '''
+    backend = config.backend
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    local_n, N_orb, N_elec = walkers_mats_up.shape
+    total_n = local_n * size
+
+    local_weights_np = _to_host(walkers_weights).real.astype(np.float64)
+    local_mats_np = _to_host(walkers_mats_up)
+
+    # Step 1: Gather weights globally
+    all_weights = np.empty(total_n, dtype=np.float64) if rank == 0 else None
+    comm.Gather(local_weights_np, all_weights, root=0)
+
+    # Step 2: Normalize weights and determine global instances (rank 0 only)
+    if rank == 0:
+        norm_factor = total_n / np.sum(all_weights)
+        norm_weights = all_weights * norm_factor
+
+        # Random bias (shift), drawn from the backend's seeded RNG for
+        # reproducibility with the rest of the simulation
+        bias = -float(_to_host(backend.random_uniform((), config.float_type)))
+
+        # Determine how many copies (instances) each walker has after
+        # resampling. This sequential cumulative-sum bookkeeping is cheap
+        # (O(total_n)) and done on host NumPy to sidestep JAX's array
+        # immutability and avoid any backend-specific indexed assignment.
+        instances = np.zeros(total_n, dtype=np.int64)
+        cumulative_sum = bias
+        previous = 0
+        for i in range(total_n):
+            cumulative_sum += norm_weights[i]
+            current = int(np.ceil(cumulative_sum))
+            instances[i] = current - previous
+            previous = current
+    else:
+        instances = np.empty(total_n, dtype=np.int64)
+
+    # Step 3: Broadcast instances to all ranks
+    comm.Bcast(instances, root=0)
+
+    # Step 4: Determine global mapping of walkers after rebalancing
+    new_total_walkers = int(np.sum(instances))
+    assert new_total_walkers == total_n, "Walker count mismatch after rebalancing."
+    map_indices = np.repeat(np.arange(total_n), instances)
+
+    # Step 5: Gather all walkers to rank 0, rearrange, scatter back
+    all_mats_up = np.empty((total_n, N_orb, N_elec), dtype=local_mats_np.dtype) if rank == 0 else None
+    comm.Gather(local_mats_np, all_mats_up, root=0)
+
+    resampled_mats_up = all_mats_up[map_indices] if rank == 0 else None
+    new_mats_np = np.empty((local_n, N_orb, N_elec), dtype=local_mats_np.dtype)
+    comm.Scatter(resampled_mats_up, new_mats_np, root=0)
+
+    # Step 6: Reset weights uniformly, convert walkers back to the active backend
+    new_mats_up = backend.array(new_mats_np)
+    new_weights = backend.ones(local_n, dtype=config.complex_type)
+
+    return new_mats_up, new_weights
+
+
+
+
+def reortho_qr(walker_matrix, config):
+    '''
+    It uses QR decomposition to reorthogonalize the orbitals in a single walker.
+    '''
+    Q, R = config.backend.qr(walker_matrix)
+    return Q
+
+
+def cholesky_orthonormalize(walker_matrix, config):
+    '''
+    Reorthogonalizes the columns of each walker via Cholesky decomposition of
+    the (num_electron x num_electron) Gram matrix A^H A, instead of a full QR
+    factorization of the (num_orbital x num_electron) matrix. Cheaper than QR
+    since Cholesky only operates on the much smaller Gram matrix. Backend
+    agnostic: works for NumPy, JAX, and CuPy via config.backend delegation.
+    '''
+    backend = config.backend
+    AhA = contract("wmi, wmj -> wij", backend.conj(walker_matrix), walker_matrix)
+    L = backend.linalg.cholesky(AhA)
+    Lh_inv = backend.linalg.inv(backend.swapaxes(backend.conj(L), -1, -2))
+    return contract("wmi, wij -> wmj", walker_matrix, Lh_inv)
+
+def init_walkers_weights( config):
+    '''
+    It initializes the weights.
+    '''
+    return config.backend.ones(config.num_walkers, dtype=config.complex_type)
+
+
+def blockAverage(datastream, block_divisor):
+    Nobs = len(datastream)
+    N = block_divisor
+    minBlockSize = 1;
+    maxBlockSize = int(Nobs/N);
+    NumBlocks = maxBlockSize - minBlockSize
+    blockMean = np.zeros(NumBlocks)
+    blockVar = np.zeros(NumBlocks)
+    blockCtr = 0
+    for blockSize in range(minBlockSize, maxBlockSize):
+        Nblock = int(Nobs/blockSize)
+        obsProp = np.zeros(Nblock)
+        for i in range(1,Nblock+1):
+            ibeg = (i-1) * blockSize
+            iend =  ibeg + blockSize
+            obsProp[i-1] = np.mean(datastream[ibeg:iend])
+        blockMean[blockCtr] = np.mean(obsProp)
+        blockVar[blockCtr] = (np.var(obsProp)/(Nblock - 1))
+        blockCtr += 1
+    v = np.arange(minBlockSize,maxBlockSize)
+
+    # The variance-of-the-mean curve should rise with block size and then
+    # plateau once the block size exceeds the autocorrelation time. Taking
+    # max(blockVar) over the whole curve is fragile: the largest block sizes
+    # have the fewest blocks left, so their variance estimate is itself the
+    # noisiest and can spike above the true plateau by chance. Use the
+    # median over the upper half of the curve instead, which is much less
+    # sensitive to a single noisy point while still reflecting the plateau.
+    plateau_var = np.median(blockVar[len(blockVar) // 2:])
+
+    return v, blockVar, blockMean, plateau_var
+
+
+
+
+if __name__ == "__main__":
+    main("single", "numpy")
+    main("double", "numpy")
+    main("single", "jax")
+    main("double", "jax")
