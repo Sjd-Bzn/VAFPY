@@ -377,13 +377,19 @@ def main():
     a = new.measure_energy(config, trial_det, walkers, hamiltonian)
     e_hf =  energy_new = energy_new = a[0]
     E_HF = e_hf.real
+    e1_hf = float(a[3].real)
+    hartree_hf = float(a[4].real)
+    exchange_hf = float(a[5].real)
     weights_file = open("weights_history.txt", "w")
     weights_file.write(f"{0}:   {np.mean(walkers.weights)}\n")
     rare_event_steps_count = 0   # Number of steps that had at least one rare event
     rare_event_total_count = 0   # Total number of walker-rare-events across all steps
     #tot_auxiliary_time = 0
-    print("HF energy", e_hf)
     if afqmc.first_cpu:
+        print("HF energy", e_hf)
+        print(f"  HF E1 (one-body) = {e1_hf:.6f}")
+        print(f"  HF Hartree       = {hartree_hf:.6f}")
+        print(f"  HF Exchange      = {exchange_hf:.6f}")
         print("JAX devices:", jax.devices())
     while (j<afqmc.NUM_STEPS+1):
         update_time_st=time()
@@ -419,23 +425,22 @@ def main():
         if j%afqmc.SAMP_FREQ==0:
             t1=time()
             a = new.measure_energy(config, trial_det, walkers, hamiltonian)
-            #a=  measure_E_gs(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body,e_hf)#,comm)#-2*num_electrons_up*num_electrons_up*num_k*fsg
             energy_new= a[0]
             b = a[1]
             c = a[2]
-    #        e_one_new =  E_one(PSI_T_up,walkers.weights,walkers.mats_up,hamil.one_body)
-    #        hartree_new = Hartree(PSI_T_up,walkers.weights,walkers.mats_up)
-    #        exchange_new = Exchange(PSI_T_up,walkers.weights,walkers.mats_up)
-    #
+            e1_new = a[3]
+            hartree_new = a[4]
+            exchange_new = a[5]
 
             print('energy test time = ', time()-t1)
 
-            #if True: #abs(energy.imag)<abs(trsh_imag) and abs(energy.real-e_hf.real)<abs(trsh_real): #ratio*(energy.real+en_const))):# and (abs((energy.real-e_hf.real)/(en_const+e_hf.real))<MAX_ACC_VAL):
             e_hf = e_hf *j +energy_new
             e_hf = e_hf /(j+1)
             if afqmc.first_cpu:
-                print(j*afqmc.D_TAU, e_hf)#, e_one_new, hartree_new, exchange_new)
-                txt = str(j*afqmc.D_TAU) + '\t' + str(energy_new.real) + '\t' + str(energy_new.imag) + '\t' + str(b.real) + '\t' + str(c.real) + '\n'
+                print(j*afqmc.D_TAU, e_hf)
+                txt = (str(j*afqmc.D_TAU) + '\t' + str(energy_new.real) + '\t' + str(energy_new.imag) + '\t'
+                       + str(b.real) + '\t' + str(c.real) + '\t'
+                       + str(e1_new.real) + '\t' + str(hartree_new.real) + '\t' + str(exchange_new.real) + '\n')
                 file_out.write(txt)
                 print()
         if True: #abs(energy.imag)<abs(trsh_imag) and abs(energy.real-e_hf.real)<abs(trsh_real): #ratio*(energy.real+en_const))):# and (abs((energy.real-e_hf.real)/(en_const+e_hf.real))<MAX_ACC_VAL):
@@ -498,6 +503,9 @@ def main():
     file_out = open(afqmc.output_file,"r")
     data1=np.loadtxt(file_out)
     data = data1[:,[1]]
+    data_e1 = data1[:,[5]]
+    data_hartree = data1[:,[6]]
+    data_exchange = data1[:,[7]]
     st = int(len(data)*afqmc.EQUILIBRATION)
     en = len(data)
     a = new.blockAverage(data[st:en], afqmc.block_divisor)
@@ -506,17 +514,30 @@ def main():
     std_err = np.sqrt(var_of_mean)
     correlation_energy = e_gs_afqmc - E_HF
     correlation_length = 0.5 * (var_of_mean / a[1][0] - 1)
+    e1_afqmc = float(np.mean(data_e1[st:en]))
+    hartree_afqmc = float(np.mean(data_hartree[st:en]))
+    exchange_afqmc = float(np.mean(data_exchange[st:en]))
     if afqmc.first_cpu:
         print()
         print('Calculating ground state energy...')
         print()
         print ('E_gs_afqmc = ', e_gs_afqmc, '+-', std_err)
-        #print('Block mean = ', a[2])
         print ('Correlation Energy = ', correlation_energy)
         print ('Variance of the mean = ', var_of_mean)
         print ('Correlation length = ', correlation_length)
         print('Total number of the rare event= ', rare_event_total_count)
         print('Numver of steps with rare events= ', rare_event_steps_count)
+        print()
+        print('HF Energy Components:')
+        print(f'  HF E1 (one-body) = {e1_hf:.6f}')
+        print(f'  HF Hartree       = {hartree_hf:.6f}')
+        print(f'  HF Exchange      = {exchange_hf:.6f}')
+        print(f'  HF Total         = {E_HF:.6f}')
+        print()
+        print('AFQMC Energy Components (equilibrated average):')
+        print(f'  AFQMC E1 (one-body) = {e1_afqmc:.6f}')
+        print(f'  AFQMC Hartree       = {hartree_afqmc:.6f}')
+        print(f'  AFQMC Exchange      = {exchange_afqmc:.6f}')
 
     file_out.close()
     if afqmc.first_cpu:
@@ -525,6 +546,12 @@ def main():
     # Output to the additional file
     with open("outcar.txt", "a") as outcar:
         if afqmc.first_cpu:
+            outcar.write("HF Energy Components:\n")
+            outcar.write(f"  HF E1 (one-body) = {e1_hf:.6f}\n")
+            outcar.write(f"  HF Hartree       = {hartree_hf:.6f}\n")
+            outcar.write(f"  HF Exchange      = {exchange_hf:.6f}\n")
+            outcar.write(f"  HF Total         = {E_HF:.6f}\n")
+            outcar.write("\n")
             outcar.write("Calculating ground state energy\n")
             outcar.write(f"E_gs_afqmc = {e_gs_afqmc}\n")
             outcar.write(f"+- {std_err}\n")
@@ -534,6 +561,11 @@ def main():
             outcar.write(f"Number of steps with rare events = {rare_event_steps_count}\n")
             outcar.write(f"Total number of rare events = {rare_event_total_count}\n")
             outcar.write(f"Total elapsed time = {elapsed_time}\n")
+            outcar.write("\n")
+            outcar.write("AFQMC Energy Components (equilibrated average):\n")
+            outcar.write(f"  AFQMC E1 (one-body) = {e1_afqmc:.6f}\n")
+            outcar.write(f"  AFQMC Hartree       = {hartree_afqmc:.6f}\n")
+            outcar.write(f"  AFQMC Exchange      = {exchange_afqmc:.6f}\n")
 
 
     if afqmc.first_cpu:
