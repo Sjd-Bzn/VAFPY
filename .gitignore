@@ -14,3 +14,6 @@ __pycache__/
 
 # Test/generated text outputs
 source/test/diamond/*.txt
+__pycache__/
+*.py[cod]
+.pytest_cache/
