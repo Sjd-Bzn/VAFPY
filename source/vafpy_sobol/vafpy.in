@@ -42,3 +42,7 @@
       Config:
       PRECSION : Single   #### Double & Single
       BACKEND  : JAX     ####JAX
+
+      SOBOL OPTIONS:
+      SOBOL    : False      ### True: use Randomized QMC (Sobol + random shift + walker permutation)
+      SOBOL_SEED: 0         ### base seed; use different values for independent randomizations
