@@ -613,9 +613,10 @@ def measure_energy(config, trial, walkers, hamiltonian):
 
     # average over all ranks
     sum_weights = config.backend.sum(walkers.weights)
-    #weighted_energy_global = config.comm.allreduce(weighted_energy)
-    #sum_weights_global = config.comm.allreduce(sum_weights)
-    return weighted_energy / sum_weights, weighted_energy, sum_weights
+    e1_avg = (energy_one_body / config.num_kpoint) @ walkers.weights / sum_weights
+    hartree_avg = (energy_hartree / config.num_kpoint) @ walkers.weights / sum_weights
+    exchange_avg = (energy_exchange / config.num_kpoint) @ walkers.weights / sum_weights
+    return weighted_energy / sum_weights, weighted_energy, sum_weights, e1_avg, hartree_avg, exchange_avg
 
 def measure_hartree(config, trial, walkers, hamiltonian):
     # compute energies locally
