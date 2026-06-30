@@ -9,8 +9,8 @@ import scipy
 from mpi4py import MPI
 from opt_einsum import contract, contract_expression
 from scipy.linalg import expm
-from scipy.special import ndtri
 from scipy.stats import qmc
+from scipy.special import ndtri
 
 
 
@@ -510,6 +510,7 @@ class Hamiltonian:
         # Sobol RQMC initialisation (no-op when use_sobol=False)
         self._sobol_base = None
         self._sobol_shift_rng = None
+        self._sobol_key = None
         if config.use_sobol:
             self._setup_rqmc(config)
 
@@ -522,8 +523,16 @@ class Hamiltonian:
         m = max(1, int(np.ceil(np.log2(max(N, 2)))))
         engine = qmc.Sobol(d=d, scramble=True, seed=config.sobol_seed)
         pts = engine.random_base2(m)[:N]                    # (N, d) float64
-        self._sobol_base = np.ascontiguousarray(pts.T)      # (d, N) float64
-        self._sobol_shift_rng = np.random.default_rng(config.sobol_seed + 99991)
+        pts_T = np.ascontiguousarray(pts.T)                 # (d, N) float64
+        if isinstance(config.backend, JaxBackend):
+            # Transfer sobol base to GPU once — not every step
+            self._sobol_base = jnp.array(pts_T)
+            self._sobol_key = jax.random.key(config.sobol_seed + 99991)
+            self._sobol_shift_rng = None
+        else:
+            self._sobol_base = pts_T
+            self._sobol_key = None
+            self._sobol_shift_rng = np.random.default_rng(config.sobol_seed + 99991)
 
     def compute_one_body(self, theta):
         return 2 * self._one_body_expression(theta)
@@ -554,13 +563,26 @@ class Hamiltonian:
         if self._sobol_base is not None:
             # Proposal eq. (14): U^(n)_{w,γ} = (S_{π(w),γ} + Δ^(n)_γ) mod 1
             N = self._sobol_base.shape[1]
-            perm  = self._sobol_shift_rng.permutation(N)             # random π_n
-            shift = self._sobol_shift_rng.uniform(size=(self._sobol_base.shape[0], 1))
-            shifted = (self._sobol_base[:, perm] + shift) % 1.0      # (d, N) float64
-            np.clip(shifted, 1e-12, 1 - 1e-12, out=shifted)
-            normals = ndtri(shifted)                                  # (d, N) float64
-            dtype = np.float32 if config.precision == "Single" else np.float64
-            return config.backend.array(normals.astype(dtype))
+            if self._sobol_key is not None:
+                # JAX backend: all ops on GPU, no per-step host↔device transfer
+                self._sobol_key, k1, k2 = jax.random.split(self._sobol_key, 3)
+                perm  = jax.random.permutation(k1, N)
+                shift = jax.random.uniform(k2, shape=(self._sobol_base.shape[0], 1))
+                shifted = (self._sobol_base[:, perm] + shift) % 1.0
+                shifted = jnp.clip(shifted, 1e-12, 1 - 1e-12)
+                normals = jax.scipy.special.ndtri(shifted)
+                if config.precision == "Single":
+                    normals = normals.astype(jnp.float32)
+                return normals
+            else:
+                # NumPy/CuPy backend: CPU Sobol then transfer
+                perm  = self._sobol_shift_rng.permutation(N)
+                shift = self._sobol_shift_rng.uniform(size=(self._sobol_base.shape[0], 1))
+                shifted = (self._sobol_base[:, perm] + shift) % 1.0
+                np.clip(shifted, 1e-12, 1 - 1e-12, out=shifted)
+                normals = ndtri(shifted)
+                dtype = np.float32 if config.precision == "Single" else np.float64
+                return config.backend.array(normals.astype(dtype))
 
         shape = (2 * config.num_g, config.num_walkers)
         return config.backend.random_normal(shape, config.float_type)
