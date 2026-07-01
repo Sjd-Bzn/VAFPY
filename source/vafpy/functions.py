@@ -610,13 +610,22 @@ def measure_energy(config, trial, walkers, hamiltonian):
     energy_exchange = hamiltonian.compute_exchange(theta)
     energy = (energy_one_body + energy_hartree + energy_exchange) / config.num_kpoint
     weighted_energy = energy @ walkers.weights
+    weighted_e1 = (energy_one_body / config.num_kpoint) @ walkers.weights
+    weighted_hartree = (energy_hartree / config.num_kpoint) @ walkers.weights
+    weighted_exchange = (energy_exchange / config.num_kpoint) @ walkers.weights
+    sum_weights = config.backend.sum(walkers.weights)
 
     # average over all ranks
-    sum_weights = config.backend.sum(walkers.weights)
-    e1_avg = (energy_one_body / config.num_kpoint) @ walkers.weights / sum_weights
-    hartree_avg = (energy_hartree / config.num_kpoint) @ walkers.weights / sum_weights
-    exchange_avg = (energy_exchange / config.num_kpoint) @ walkers.weights / sum_weights
-    return weighted_energy / sum_weights, weighted_energy, sum_weights, e1_avg, hartree_avg, exchange_avg
+    weighted_energy_global = config.comm.allreduce(weighted_energy)
+    weighted_e1_global = config.comm.allreduce(weighted_e1)
+    weighted_hartree_global = config.comm.allreduce(weighted_hartree)
+    weighted_exchange_global = config.comm.allreduce(weighted_exchange)
+    sum_weights_global = config.comm.allreduce(sum_weights)
+    e1_avg = weighted_e1_global / sum_weights_global
+    hartree_avg = weighted_hartree_global / sum_weights_global
+    exchange_avg = weighted_exchange_global / sum_weights_global
+    return (weighted_energy_global / sum_weights_global, weighted_energy_global, sum_weights_global,
+            e1_avg, hartree_avg, exchange_avg)
 
 def measure_hartree(config, trial, walkers, hamiltonian):
     # compute energies locally
