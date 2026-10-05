@@ -355,20 +355,24 @@ class Hamiltonian:
         h_mf = H_1_mf(trial_single, trial_host, h2_host, h2_dag, ql,
                       h1_host, config.num_kpoint,
                       config.num_orbital, config.num_electron)
-        h_sic = -contract("ijG, jkG -> ik", h2_host, h2_dag) / 2
-        h1_total = h_mf + h_sic   # H_1_mf already returns h1 + change/2
+        # LOCAL FIX: the exported L is unscaled; the physical interaction is V = (1/nk) sum L L^dagger
+        # (verified by MP2: supercell == primitive only with 1/nk). Quadratic terms get 1/nk.
+        nk = config.num_kpoint
+        h_sic = -contract("ijG, jkG -> ik", h2_host, h2_dag) / (2 * nk)
+        h1_total = h1_host + (h_mf - h1_host) / nk + h_sic   # H_1_mf returns h1 + change/2
 
-        # H_zero = sum of mean-field constant from L_0 (used in S2 propagator).
+        # H_zero: mean-field constant so that the full determinant scales as exp(tau*E_H_total):
+        # E_H_total = 2|L0|^2/nk and the determinant has num_electron*num_kpoint columns => divide by 2*ne*nk^2 (LOCAL FIX)
         L_0 = mean_field_diag(h2_host, config.num_electron,
                               config.num_orbital, config.num_kpoint)
-        self.H_zero = 2 * np.einsum("g,g->", L_0, L_0.conj()) / (2 * config.num_electron)
+        self.H_zero = 2 * np.einsum("g,g->", L_0, L_0.conj()) / (2 * config.num_electron * config.num_kpoint**2)
 
         # Two-body after mean-field subtraction, split into Hermitian/anti-Hermitian.
         h2_mf = A_af_MF_sub(trial_single, trial_host, h2_host, ql,
                             config.num_kpoint, config.num_orbital, config.num_electron)
         two_body_e = gen_A_e(h2_mf)
         two_body_o = gen_A_o(h2_mf)
-        two_body_eo = np.concatenate((two_body_e, two_body_o), axis=-1)
+        two_body_eo = np.concatenate((two_body_e, two_body_o), axis=-1) / np.sqrt(nk)   # LOCAL FIX: L -> L/sqrt(nk) in the propagator
 
         # Ship the propagator pieces back to the backend.
         h1_total_be = config.backend.array(h1_total, dtype=config.complex_type)
@@ -655,6 +659,10 @@ def rebalance_comb(config, weights):
 
 def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
     """Global rebalance across MPI ranks."""
+    # LOCAL FIX: buffers below are complex128; MPI Gather with complex64 (Single precision) input
+    # reinterprets bytes -> garbage/inf weights. Work in complex128 here (caller casts back).
+    walkers_mats_up = np.asarray(walkers_mats_up, dtype=np.complex128)
+    walkers_weights = np.asarray(walkers_weights, dtype=np.complex128)
     rank = comm.Get_rank()
     size = comm.Get_size()
     local_n, n_orb, n_elec = walkers_mats_up.shape
