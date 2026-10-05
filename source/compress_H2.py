@@ -71,22 +71,27 @@ def get_k1s_k2s(q_list, q_selected):
     return list(zip(sub[:, 0], sub[:, 1]))
 
 
-def extract_q_block(h2, q_list, q_selected, num_orb):
-    """Return H2 with only the blocks belonging to Q=q_selected (rest zeroed)."""
-    result = np.zeros_like(h2)
+def extract_q_pairs(h2, q_list, q_selected, num_orb):
+    """Stack only the (K1,K2) blocks belonging to Q=q_selected into a small
+    dense submatrix, instead of zeroing the rest of the full (nb,nb) matrix.
+    Returns the submatrix (n_pairs*num_orb^2, ng_raw) and the block slices
+    needed to scatter results back into the full (nb,nb,*) layout."""
+    slices = []
+    rows = []
     for K1, K2 in get_k1s_k2s(q_list, q_selected):
         r1 = (K1 - 1) * num_orb;  r2 = K1 * num_orb
         c1 = (K2 - 1) * num_orb;  c2 = K2 * num_orb
-        result[r1:r2, c1:c2, :] = h2[r1:r2, c1:c2, :]
-    return result
+        slices.append((r1, r2, c1, c2))
+        rows.append(h2[r1:r2, c1:c2, :].reshape(num_orb * num_orb, -1))
+    mat = np.concatenate(rows, axis=0) if rows else np.zeros((0, h2.shape[2]), dtype=h2.dtype)
+    return mat, slices
 
 
 # ---------------------------------------------------------------------------
 #  Per-Q SVD worker (called in parallel)
 # ---------------------------------------------------------------------------
 def _svd_one_q(h2, q_list, q, num_orb, nb, threshold):
-    block = extract_q_block(h2, q_list, q, num_orb)   # (nb, nb, ng_raw)
-    mat   = block.reshape(nb * nb, -1)                 # (nb^2, ng_raw)
+    mat, slices = extract_q_pairs(h2, q_list, q, num_orb)   # (n_pairs*num_orb^2, ng_raw)
     u, s, _ = np.linalg.svd(mat, full_matrices=False)
     kept   = s > threshold
     n_kept = int(kept.sum())
@@ -95,7 +100,12 @@ def _svd_one_q(h2, q_list, q, num_orb, nb, threshold):
         s_min = 0.0
         n_kept = 1
     else:
-        compressed = (u[:, kept] @ np.diag(s[kept])).reshape(nb, nb, n_kept)
+        compressed_small = (u[:, kept] @ np.diag(s[kept]))   # (n_pairs*num_orb^2, n_kept)
+        compressed = np.zeros((nb, nb, n_kept), dtype=np.complex128)
+        off = 0
+        for (r1, r2, c1, c2) in slices:
+            compressed[r1:r2, c1:c2, :] = compressed_small[off:off + num_orb * num_orb].reshape(num_orb, num_orb, n_kept)
+            off += num_orb * num_orb
         s_min = float(s[kept][-1])
     return compressed, float(s[0]), s_min, n_kept
 
