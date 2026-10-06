@@ -47,15 +47,27 @@ For `nk = 1` the two layouts coincide and the file is treated as dense.
 4. Set `NGVEC`, `KPOINT`, `NORB` in `vafpy.in`, then
    `mpirun -n <N> python3 run_kpts.py` (or one process with `BACKEND : JAX`).
 
-## What changed with respect to vafpy_v2
+## Compact kernels
 
-* `HamiltonianCompact` (functions.py): local energy through
-  `W[i,r,j,p] = sum_g L[i,r,g] conj(L[p,j,g])` assembled per sector; force bias
-  and auxiliary field gathered through `kmap`; mean-field subtraction,
-  `h_mf`, `h_sic` and `H_zero` from the diagonal blocks of the sector that
-  contains them. Same 1/nk conventions as vafpy_v2.
-* `build_hamiltonian` chooses the class from the H2 shape; `QSIZES` input key.
-* `compress_H2_compact.py` for the compact SVD.
+`HamiltonianCompact` works directly on the compact tensor. Notation: `nb`, `ne` bands and occupied orbitals per
+k-point, `nk` k-points, `ng` retained columns in total (about `nk * n_q`), `w` walkers; `kmap[q,K2] = K1`.
+The tensor is stored once, padded per sector, as `M[q, g, (K2,b2,b1)]`; nothing of size `(nb*nk, nb*nk, ng)` is built.
+
+| kernel | contraction | cost per walker (v2 dense -> v3) |
+|---|---|---|
+| force bias | `P[g] = sum theta[(K2,b2),(kmap[q,K2],o)] M[q,g,(K2,b2,o)]`, `Q` with the conjugate slice; `(P+Q)/2`, `i(P-Q)/2` | `2 ng nk^2 ne nb` -> `2 ng nk ne nb` |
+| auxiliary field | block `(kmap[q,K2], K2)` of the final matrix = `sum_g M[q,g,(K2,b2,b1)] u_g` (and `conj(M) v_g`) | `2 ng nk^2 nb^2` -> `2 ng nk nb^2` |
+| Hartree | `2 sum_g P_g Q_g` (same `P`, `Q`, no extra tensor) | `2 ng nk^2 ne nb` -> `2 ng nk ne nb` |
+| exchange | `sum_q sum_{K2,Kb} theta[(K2,b2),(Kb,ob)] theta[(kmap[q,Kb],bp),(kmap[q,K2],oa)] G_q[(K2,b2,oa),(Kb,ob,bp)]` with the per-sector Gram `G_q = sum_g Lc conj(Lc)` of the occupied blocks | `nk^4 ne^2 nb^2` -> `nk^3 ne^2 nb^2` |
+| mean field, `h_sic`, `H_zero` | slices of the compact blocks of the sector that contains them; mean-field shift applied as an exact scalar | setup only |
+
+`G` has `nk^3 ne^2 nb^2` elements. The dense reference precontracts the same sum into a `(ne*nk, nb*nk, ne*nk, nb*nk)`
+tensor with `nk^4 ne^2 nb^2` elements, 7/8 of them zeros for `nk = 8`. `exchange_mode='direct'` evaluates the exchange as a sum over every column `g` without `G` (reference,
+slower for small `nk`). The summed one-body field is the only dense H2-dependent object, `(nb*nk, nb*nk)` per walker,
+because the walkers are dense in the combined band-k basis.
+
+On a JAX backend the kernels are compiled with `jit`; single precision stays `complex64`/`float32`.
+`benchmark_kernels.py` reports per-kernel time and memory.
 
 ## Tests
 
@@ -68,6 +80,9 @@ python3 -m pytest .
 * `test_compact_svd.py`: compact SVD (ranks, reconstruction, thresholds).
 * `test_compact_hamiltonian.py`: compact vs dense term by term (setup, energy,
   force bias, auxiliary field, propagation) and a same-seed trajectory.
+* `test_compact_kernels.py`: mean-field pieces, force bias, auxiliary-field matrix, Hartree, exchange (Gram and
+  sum over g), local energy, weights and reorthogonalisation against the dense reference, and the invariant that
+  the full H2 is never built (reconstruction disabled, no array of full-H2 size, host allocation below one full H2).
 * `test_compact_backends.py`: JAX single precision vs NumPy double (CPU/GPU).
 * `test_vafpy_v3_kpoint.py`: primitive 2x2x2 (both layouts) vs the Gamma
   supercell: HF energy, `H_zero`, MP2 normalisation, early decay, rebalance.
