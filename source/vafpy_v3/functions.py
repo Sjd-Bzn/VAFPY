@@ -521,7 +521,6 @@ class HamiltonianCompact:
         self.H_zero = 2 * np.einsum("g,g->", L0, L0.conj()) / (2 * ne * nk**2)
 
         change = np.zeros((nbk, nbk), dtype=np.complex128)
-        Lmf = Lc.copy()
         for q in mf_sectors:
             cols = slice(off[q], off[q + 1])
             avg = 2 * L0[cols]
@@ -529,8 +528,6 @@ class HamiltonianCompact:
                 blk = Lc[K * nb:(K + 1) * nb, :, cols]                # blk[p, r, g] = L[(K,r),(K,p),g]
                 change[K * nb:(K + 1) * nb, K * nb:(K + 1) * nb] += \
                     np.einsum("prg,g->rp", blk, avg.conj()) + np.einsum("rpg,g->rp", blk.conj(), avg)
-                for r in range(nb):
-                    Lmf[K * nb + r, r, cols] -= avg / (2 * ne * nk)
         h_sic = np.zeros((nbk, nbk), dtype=np.complex128)
         for q in range(nk):
             cols = slice(off[q], off[q + 1])
@@ -547,26 +544,11 @@ class HamiltonianCompact:
         self._exp_h1_half = be.expm(-0.5 * h1_total_be * config.timestep)
         self._sqrt_tau = be.sqrt(be.array(config.timestep)).astype(config.float_type)
 
-        # ---- propagation tensors: mean-field subtracted, scaled by 1/sqrt(nk), padded per sector ----
+        # ---- sector bookkeeping (columns are padded to the largest sector) ----
         nmax = int(sizes.max())
-        Lp = np.zeros((nk, nk, nb, nb, nmax), dtype=np.complex128)      # q, K2, b2, b1, g
-        for q in range(nk):
-            n = sizes[q]
-            Lp[q, :, :, :, :n] = (Lmf[:, :, off[q]:off[q + 1]] / np.sqrt(nk)).reshape(nk, nb, nb, n)
-        Lp_be = be.array(Lp, dtype=config.complex_type)
         self._nk, self._nb, self._ne, self._ng, self._nmax = nk, nb, ne, ng, nmax
-        self._Lp = Lp_be
-        self._Lp_conj = be.array(Lp.conj(), dtype=config.complex_type)
-        self._LpP = be.array(Lp[:, :, :, :ne, :], dtype=config.complex_type)                # q,K2,b2,o,g
-        self._LpQc = be.array(Lp[:, :, :ne, :, :].conj(), dtype=config.complex_type)        # q,K,o,b1,g (conj)
 
         ar_nk = np.arange(nk)
-        b = np.arange(nb)
-        o = np.arange(ne)
-        self._rowsP = (ar_nk[None, :, None] * nb + b[None, None, :]) * np.ones((nk, 1, 1), dtype=np.int64)  # (q,K2,b2)
-        self._colsP = kmap[:, :, None] * ne + o[None, None, :]                                  # (q,K2,o)
-        self._rowsQ = kmap[:, :, None] * nb + b[None, None, :]                                  # (q,Ki,b1)
-        self._colsQ = (ar_nk[None, :, None] * ne + o[None, None, :]) * np.ones((nk, 1, 1), dtype=np.int64)  # (q,Ki,o)
         qmap = np.zeros((nk, nk), dtype=np.int64)                                               # qmap[K1,K2] = q
         for q in range(nk):
             for K2 in range(nk):
@@ -609,6 +591,7 @@ class HamiltonianCompact:
         self._mQ = be.array((np.arange(nb) < ne).astype(float)[None, None, :, None, None], dtype=config.float_type)
         self._occ_rows = np.array([K * nb + o for K in range(nk) for o in range(ne)])
         self._ar_nek = np.arange(nek)
+        self._eye = be.eye(nbk, dtype=config.complex_type)
         self._inv_sqrt_nk = float(1.0 / np.sqrt(nk))      # python float: keeps complex64 as complex64
 
     # ------------------------------------------------------------------
@@ -655,7 +638,8 @@ class HamiltonianCompact:
         return self._be.concatenate([(P + Q) * (s / 2), (P - Q) * (1j * s / 2)], axis=0)
 
     def _auxiliary_field(self, x):
-        """sum_g A_e x_e + A_o x_o as a dense (nb*nk, nb*nk, nw) matrix, A_e = (L+L^+)/2, A_o = i(L-L^+)/2."""
+        """sum_g A_e x_e + A_o x_o as one dense (nb*nk, nb*nk, nw) matrix, A_e = (L+L^+)/2, A_o = i(L-L^+)/2,
+        built block by block: sector q and column k-point K2 fill the block (kmap[q,K2], K2); no dense L_g is formed."""
         nk, nb, ng = self._nk, self._nb, self._ng
         nw = x.shape[1]
         be = self._be
@@ -664,11 +648,17 @@ class HamiltonianCompact:
         zero = be.zeros((1, nw), dtype=u.dtype)
         u_pad = be.concatenate([u, zero], axis=0)[self._gidx]                     # q,g,w
         v_pad = be.concatenate([v, zero], axis=0)[self._gidx]
-        R1 = contract("qkabg, qgw -> qkabw", self._Lp, u_pad)                     # q,K2,b2,b1,w
-        R2 = contract("qkabg, qgw -> qkabw", self._Lp_conj, v_pad)
-        F1 = R1[self._qmap, self._ar[None, :]].transpose(0, 3, 1, 2, 4)           # K1,b1,K2,b2,w
-        F2 = R2[self._qmapT, self._ar[:, None]].transpose(0, 2, 1, 3, 4)          # Ki,bi,Kj,bj,w
-        return (F1 + F2).reshape(nk * nb, nk * nb, nw)
+        rhs = be.concatenate([u_pad, v_pad.conj()], axis=-1)                       # q,g,2w
+        out = be.matmul(self._M.transpose(0, 2, 1), rhs)                           # q,(K2,b2,b1),2w
+        R1 = out[..., :nw].reshape(nk, nk, nb, nb, nw)                             # sum_g L u         [q,K2,b2,b1,w]
+        R2 = out[..., nw:].conj().reshape(nk, nk, nb, nb, nw)                      # sum_g conj(L) v
+        F1 = R1[self._qmap, self._ar[None, :]].transpose(0, 3, 1, 2, 4)            # K1,b1,K2,b2,w
+        F2 = R2[self._qmapT, self._ar[:, None]].transpose(0, 2, 1, 3, 4)           # Ki,bi,Kj,bj,w
+        field = (F1 + F2).reshape(nk * nb, nk * nb, nw)
+        if self._has_mf:       # L_mf = L - c_g on the diagonal: subtract (sum_g c_g u_g + conj(c_g) v_g) * identity
+            sw = (self._c * u).sum(axis=0) + (self._c_conj * v).sum(axis=0)
+            field = field - self._eye[:, :, None] * sw[None, None, :]
+        return field * self._inv_sqrt_nk
 
     def create_auxiliary_field(self, config, theta):
         random_field = self.create_random_field(config)

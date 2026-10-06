@@ -190,7 +190,7 @@ def test_single_precision_compact_stays_single_and_close_to_double():
     cfg64 = make_config(4, precision="Double")
     _, H32, trial32, w32 = both(cfg32)
     _, H64, trial64, w64 = both(cfg64)
-    assert H32._Lp.dtype == np.complex64 and H32._exp_h1_half.dtype == np.complex64
+    assert H32._M.dtype == np.complex64 and H32._exp_h1_half.dtype == np.complex64
     w32 = perturbed(cfg32, w32); w64 = perturbed(cfg64, w64)
     th32 = new.biorthogonalize(cfg32.backend, trial32, w32.slater_det)
     th64 = new.biorthogonalize(cfg64.backend, trial64, w64.slater_det)

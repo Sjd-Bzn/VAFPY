@@ -43,7 +43,7 @@ def test_jax_single_precision_dtypes():
     th = new.biorthogonalize(config.backend, trial, walkers.slater_det)
     fb = H._force_bias(th)
     field = H._auxiliary_field(fb)
-    for name, x in {"H1": H.one_body, "H2c": H.two_body, "padded L": H._Lp, "exp_h1_half": H.exp_h1_half,
+    for name, x in {"H1": H.one_body, "H2c": H.two_body, "padded L": H._M, "exp_h1_half": H.exp_h1_half,
                     "walkers": walkers.slater_det, "weights": walkers.weights, "theta": th,
                     "force bias": fb, "aux field": field}.items():
         assert x.dtype == np.complex64, (name, x.dtype)
