@@ -580,6 +580,37 @@ class HamiltonianCompact:
             valid[off[q]:off[q + 1]] = q * nmax + np.arange(sizes[q])
         self._gidx, self._valid = gidx, valid
 
+        # ---- single padded compact tensor for batched matrix products -------------------------------------
+        # M[q, g, (K2,b2,b1)] = Lc[(K2,b2), b1, off_q + g]: rows are the columns g of sector q.
+        M = np.zeros((nk, nmax, nk * nb * nb), dtype=np.complex128)
+        for q in range(nk):
+            n = sizes[q]
+            M[q, :n, :] = Lc[:, :, off[q]:off[q + 1]].reshape(nk * nb * nb, n).T
+        self._M = be.array(M, dtype=config.complex_type)
+        del M
+        # mean-field shift: L_mf = L - c_g on the diagonal blocks of the sector(s) with fixed points
+        c = np.zeros(ng, dtype=np.complex128)
+        for q in mf_sectors:
+            c[off[q]:off[q + 1]] = L0[off[q]:off[q + 1]] / (ne * nk)
+        self._c = be.array(c[:, None], dtype=config.complex_type)
+        self._c_conj = be.array(c.conj()[:, None], dtype=config.complex_type)
+        self._has_mf = bool(np.any(c != 0))
+        # theta gathers (theta^T has shape (nbk, nek, w)); masks zero the unused occupied slot
+        k_ = np.arange(nk)[None, :, None, None]
+        q_ = np.arange(nk)[:, None, None, None]
+        b2_ = np.arange(nb)[None, None, :, None]
+        b1_ = np.arange(nb)[None, None, None, :]
+        km = kmap[:, :, None, None]
+        self._rP = np.broadcast_to(k_ * nb + b2_, (nk, nk, nb, nb)).copy()                 # row (K2, b2)
+        self._cP = np.broadcast_to(km * ne + np.minimum(b1_, ne - 1), (nk, nk, nb, nb)).copy()   # col (kmap[q,K2], o=b1)
+        self._mP = be.array((np.arange(nb) < ne).astype(float)[None, None, None, :, None], dtype=config.float_type)
+        self._rQ = np.broadcast_to(km * nb + b1_, (nk, nk, nb, nb)).copy()                 # row (kmap[q,Ki], b1)
+        self._cQ = np.broadcast_to(k_ * ne + np.minimum(b2_, ne - 1), (nk, nk, nb, nb)).copy()   # col (Ki, o=b2)
+        self._mQ = be.array((np.arange(nb) < ne).astype(float)[None, None, :, None, None], dtype=config.float_type)
+        self._occ_rows = np.array([K * nb + o for K in range(nk) for o in range(ne)])
+        self._ar_nek = np.arange(nek)
+        self._inv_sqrt_nk = float(1.0 / np.sqrt(nk))      # python float: keeps complex64 as complex64
+
     # ------------------------------------------------------------------
     def compute_one_body(self, theta):
         return 2 * self._one_body_expression(theta)
@@ -597,16 +628,31 @@ class HamiltonianCompact:
         return self.test_random_field
 
     # ------------------------------------------------------------------
+    def _pq(self, theta):
+        """P[g,w] = sum theta[w,r,i] L[i_occ,r,g] and Q[g,w] = sum theta[w,r,i] conj(L[r,i_occ,g]) for the raw L.
+
+        Both are batched matrix products over the sector index q with the single padded tensor M:
+        for every (q, K2) only the block K1 = kmap[q, K2] of theta is touched."""
+        nk, nb = self._nk, self._nb
+        thT = theta.transpose(1, 2, 0)                                    # (nbk, nek, w)
+        w = thT.shape[-1]
+        gP = thT[self._rP, self._cP] * self._mP                           # q,K2,b2,b1,w : theta[(K2,b2),(kmap,o=b1)]
+        gQ = thT[self._rQ, self._cQ] * self._mQ                           # q,Ki,b2,b1,w : theta[(kmap,b1),(Ki,o=b2)]
+        rhs = self._be.concatenate([gP.reshape(nk, nk * nb * nb, w), gQ.conj().reshape(nk, nk * nb * nb, w)], axis=-1)
+        out = self._be.matmul(self._M, rhs)                               # q, g, 2w
+        P = out[..., :w].reshape(nk * self._nmax, w)[self._valid]
+        Q = out[..., w:].conj().reshape(nk * self._nmax, w)[self._valid]
+        return P, Q
+
     def _force_bias(self, theta):
-        """(2*ng, nw): [ (P+Q)/2 ; i(P-Q)/2 ], P = sum theta L[i_occ, r], Q = sum theta conj(L[r, i_occ])."""
-        nw = theta.shape[0]
-        th_P = theta[:, self._rowsP[:, :, :, None], self._colsP[:, :, None, :]]   # w,q,K2,b2,o
-        th_Q = theta[:, self._rowsQ[:, :, :, None], self._colsQ[:, :, None, :]]   # w,q,Ki,b1,o
-        P = contract("wqkbo, qkbog -> qgw", th_P, self._LpP)
-        Q = contract("wqkbo, qkobg -> qgw", th_Q, self._LpQc)
-        P = P.reshape(self._nk * self._nmax, nw)[self._valid]
-        Q = Q.reshape(self._nk * self._nmax, nw)[self._valid]
-        return self._be.concatenate([(P + Q) / 2, 1j * (P - Q) / 2], axis=0)
+        """(2*ng, nw): [ (P+Q)/2 ; i(P-Q)/2 ] / sqrt(nk) for the mean-field subtracted L."""
+        P, Q = self._pq(theta)
+        if self._has_mf:
+            S = theta[:, self._occ_rows, self._ar_nek].sum(axis=1)       # sum_i theta[(i_occ), i] (= nek for the HF trial)
+            P = P - self._c * S[None, :]
+            Q = Q - self._c_conj * S[None, :]
+        s = self._inv_sqrt_nk
+        return self._be.concatenate([(P + Q) * (s / 2), (P - Q) * (1j * s / 2)], axis=0)
 
     def _auxiliary_field(self, x):
         """sum_g A_e x_e + A_o x_o as a dense (nb*nk, nb*nk, nw) matrix, A_e = (L+L^+)/2, A_o = i(L-L^+)/2."""
