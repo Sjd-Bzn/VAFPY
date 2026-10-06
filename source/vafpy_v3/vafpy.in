@@ -1,48 +1,49 @@
-      SYSTEM   : Diamond_8k
+      SYSTEM   : Diamond_8k_compact
 
       System Properties:
-      NGVEC    : 1644           #### from compress_H2.py output (threshold 1e-3)
-      NEUP     : 4
+      NGVEC    : 1999           #### sum of Q_sizes.npy, printed by compress_H2_compact.py
+      NEUP     : 4              #### electrons per k-point and spin
       EBANDS   : 0
       NEDOWN   : 4
-      NORB     : 8
+      NORB     : 8              #### orbitals per k-point
       EHZB     : 0
       ECONST   : 0
       SPIN     : 0
-      FSG      : 0.701728       #### intra-k (q=0) Madelung correction; computed as VASP_EXHF - ex_from_H2/nk = -418.97645251 - (-419.678180) = 0.701728 eV
+      FSG      : 0.0            #### singularity exported by VASP (afqmc.yaml); 0 for the 2x2x2 diamond export
+      KPOINT   : 8
 
       CONTROL PARAMETER FOR THIS RUN:
       PROPAG   : S2
       EQLB     : 0.2
-      DTAU     : 0.0001         #### small DTAU needed: h_sic has large neg diagonal for 8k
-      NWAK     : 50
-      NSTP     : 100
-      BLKDIV   : 10
-      KPOINT   : 8
+      DTAU     : 0.00025        #### eV^-1
+      NWAK     : 256
+      NSTP     : 4000
+      BLKDIV   : 15
       TMAX     : 184800
       OTEY     : 6
       TIMG     : 10
       TREL     : 10
       SEED     : 12345
 
-      DATA FILES:
-      H1FILE   : ~/projects/data/vafpy_v3/H1_svd.npy
-      H2FILE   : ~/projects/data/vafpy_v3/H2_zip.npy
-      QLIST    : ~/projects/data/vafpy_v3/Q_list.npy
+      DATA FILES (compact H2: (nb*nk, nb, ng_total)):
+      H1FILE   : H1_svd.npy
+      H2FILE   : H2_zip.npy     #### compact, from compress_H2_compact.py (a dense (nb*nk, nb*nk, ng) file is also accepted)
+      QLIST    : Q_list.npy     #### rows [K1, K2, Q], one-based; must conserve momentum for compact H2
+      QSIZES   : Q_sizes.npy    #### columns of every q sector (default: equal split)
 
       METHOD IMPLEMENTATION:
       UPDTM    : H
       REOPRI   : 1
       REORTHO  : QR      #### QR or Cholesky (Cholesky requires JAX backend)
-      REBPRI   : 2
-      REBMTH   : local   #### local or global
+      REBPRI   : 10
+      REBMTH   : global  #### local or global
       SMFRQ    : 1
-      CHPRI    : 4999
+      CHPRI    : 99999
 
       SINGULAR VALUE DECOMPOSITION and HATREE-FOCK:
       SVD      : False
       SVDT     : 1e-7
-      HF       : True           #### run HF test first
+      HF       : False
       HFTAU    : 1.0e-10
       HFSTP    : 1
 
