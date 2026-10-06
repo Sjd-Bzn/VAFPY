@@ -1,4 +1,4 @@
-"""End-to-end verification of vafpy_v2 against the reference opt code.
+"""End-to-end verification of vafpy_v3 against the reference opt code.
 
 The test is deterministic: we feed the propagator a *fixed* random
 field via Hamiltonian.test_random_field so the new propagator output
@@ -221,7 +221,7 @@ def test_qlist_loading_and_default():
     """Q_list.npy is consumed; default heuristic also works."""
     config = build_config(num_k=1, num_orb=8, num_e=4, num_g=36,
                           num_walkers=2, dtau=0.005)
-    ql = new.obtain_Q_list(config, "Q_list.npy")  # uses vafpy_v2 Q_list (any shape is fine here)
+    ql = new.obtain_Q_list(config, "Q_list.npy")  # uses vafpy_v3 Q_list (any shape is fine here)
     assert ql.shape[1] == 3, ql.shape
     # heuristic fallback should produce something non-empty
     default_ql = new.build_default_q_list(4)
@@ -286,7 +286,7 @@ def test_multi_k_consistency():
 
 
 def main():
-    print("Running vafpy_v2 verification tests...\n")
+    print("Running vafpy_v3 verification tests...\n")
     test_hf_energy_matches_opt()
     test_initialize_multi_k_trial()
     test_qlist_loading_and_default()

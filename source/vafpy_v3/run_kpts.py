@@ -1,4 +1,4 @@
-"""AFQMC driver for vafpy_v2 (GPU/CPU + k-point support)."""
+"""AFQMC driver for vafpy_v3 (GPU/CPU + k-point support)."""
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -19,7 +19,7 @@ def main():
 
     if afqmc.first_cpu:
         print("###########################")
-        print("    AFQMC (vafpy_v2)")
+        print("    AFQMC (vafpy_v3)")
         print("###########################")
         print()
         print("system               = ", afqmc.system)

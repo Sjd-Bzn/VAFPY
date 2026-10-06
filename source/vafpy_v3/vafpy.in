@@ -26,9 +26,9 @@
       SEED     : 12345
 
       DATA FILES:
-      H1FILE   : ~/projects/data/vafpy_v2/H1_svd.npy
-      H2FILE   : ~/projects/data/vafpy_v2/H2_zip.npy
-      QLIST    : ~/projects/data/vafpy_v2/Q_list.npy
+      H1FILE   : ~/projects/data/vafpy_v3/H1_svd.npy
+      H2FILE   : ~/projects/data/vafpy_v3/H2_zip.npy
+      QLIST    : ~/projects/data/vafpy_v3/Q_list.npy
 
       METHOD IMPLEMENTATION:
       UPDTM    : H

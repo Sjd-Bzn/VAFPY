@@ -1,4 +1,4 @@
-"""k-point validation of vafpy_v2: primitive cell + 2x2x2 k-mesh vs equivalent 2x2x2 supercell at Gamma.
+"""k-point validation of vafpy_v3: primitive cell + 2x2x2 k-mesh vs equivalent 2x2x2 supercell at Gamma.
 
 Both describe the same finite system and the same 64-orbital space (8 HF orbitals/k vs 64 supercell
 orbitals), so HF energy, MP2 energy and the imaginary-time dynamics must agree. These tests encode

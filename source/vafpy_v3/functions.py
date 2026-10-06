@@ -1,5 +1,5 @@
 """
-vafpy_v2: unified GPU/CPU AFQMC with k-point support.
+vafpy_v3: unified GPU/CPU AFQMC with k-point support.
 
 Backend abstraction (NumPy / JAX / CuPy) follows the vafpy_v1 design.
 K-point physics (mean-field subtraction, Q-list, block-diagonal trial)
