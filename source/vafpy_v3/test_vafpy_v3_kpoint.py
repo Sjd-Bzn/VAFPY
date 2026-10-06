@@ -92,11 +92,14 @@ def _mp2(name, scale):
     occ = np.array([k * s["num_orb"] + b for k in range(nk) for b in range(no)])
     vir = np.array([k * s["num_orb"] + b for k in range(nk) for b in range(no, s["num_orb"])])
     Lov = L[np.ix_(occ, vir)].reshape(len(occ) * len(vir), -1)           # ((i,a), G)
-    M = (Lov @ Lov.conj().T * scale).reshape(len(occ), len(vir), len(occ), len(vir))
+    # (ia|jb) = scale * sum_g L[i,a] conj(L[b,j]): the second pair is reversed, which only equals conj(L[j,b])
+    # for real orbitals or meshes with q = -q (such as 2x2x2)
+    Lvo = L[np.ix_(vir, occ)].transpose(1, 0, 2).reshape(len(occ) * len(vir), -1)    # ((j,b), G) = L[b,j]
+    M = (Lov @ Lvo.conj().T * scale).reshape(len(occ), len(vir), len(occ), len(vir))
     ex = M.transpose(0, 3, 2, 1)
     eo, ev = eps[occ], eps[vir]
     den = eo[:, None, None, None] + eo[None, None, :, None] - ev[None, :, None, None] - ev[None, None, None, :]
-    return (M * (2 * M - ex) / den).sum().real
+    return (M.conj() * (2 * M - ex) / den).sum().real
 
 
 def test_mp2_primitive_equals_supercell_with_1_over_nk():
