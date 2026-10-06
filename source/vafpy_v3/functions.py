@@ -456,6 +456,7 @@ class HamiltonianCompact:
     H_zero: complex = 0.0
     q_list: object = None   # unused, kept for interface symmetry
     test_random_field: object = None
+    exchange_mode: str = "gram"     # 'gram' (per-sector Gram of the occupied blocks) or 'direct' (sum over g, reference)
 
     # ------------------------------------------------------------------
     def setup_energy_expressions(self, config, trial_det):
@@ -483,28 +484,22 @@ class HamiltonianCompact:
         self._one_body_expression = contract_expression(
             "ip, wpi -> w", h1_trial, shape_theta, constants=[0], optimize="greedy")
 
-        # ---- Hartree / exchange: W[i,r,j,p] = sum_g L[i_occ,r,g] conj(L[p,j_occ,g]) ----
+        # ---- exchange: Gram over g of the occupied blocks, one matrix per sector q ------------------------------
+        # G[q, K2, Kb, (b2,ob), (oa,bp)] = sum_{g in q} Lc[(K2,b2),oa,g] conj(Lc[(Kb,ob),bp,g]); the row k-points of
+        # both factors (kmap[q,K2], kmap[q,Kb]) are implicit, so no zero blocks are stored.
         occ_rows = np.array([K * nb + o for K in range(nk) for o in range(ne)])
-        W = np.zeros((nek, nbk, nek, nbk), dtype=np.complex128)
+        G = np.zeros((nk, nk, nk, nb * ne, ne * nb), dtype=np.complex128)
         for q in range(nk):
             cols = slice(off[q], off[q + 1])
             A = Lc[:, :ne, cols].reshape(nbk * ne, -1)                 # (K2,b2,oa)
             B = Lc[occ_rows][:, :, cols].reshape(nek * nb, -1)         # (Kb,ob,bp)
-            G = (A @ B.conj().T).reshape(nk, nb, ne, nk, ne, nb)       # K2,b2,oa,Kb,ob,bp
-            for K2 in range(nk):
-                Ka = kmap[q, K2]
-                for Kb in range(nk):
-                    Kp = kmap[q, Kb]
-                    W[Ka * ne:(Ka + 1) * ne, K2 * nb:(K2 + 1) * nb,
-                      Kb * ne:(Kb + 1) * ne, Kp * nb:(Kp + 1) * nb] += \
-                        G[K2, :, :, Kb, :, :].transpose(1, 0, 2, 3)
-        W_be = be.array(W, dtype=config.complex_type)
-        args = (shape_theta, shape_theta, W_be)
-        kwargs = {"constants": [2], "optimize": "greedy"}
-        self._hartree_expression = contract_expression("wri, wpj, irjp -> w", *args, **kwargs)
-        self._exchange_expression = contract_expression("wri, wpj, jrip -> w", *args, **kwargs)
+            Gq = (A @ B.conj().T).reshape(nk, nb, ne, nk, ne, nb)      # K2,b2,oa,Kb,ob,bp
+            G[q] = Gq.transpose(0, 3, 1, 4, 2, 5).reshape(nk, nk, nb * ne, ne * nb)
+        self._G = be.array(G, dtype=config.complex_type)
+        del G
         self._singularity_correction = config.singularity * config.num_kpoint
-        del W, W_be
+        self._kq = [np.asarray(kmap[q]) for q in range(nk)]
+        self._kinv = [np.argsort(kmap[q]) for q in range(nk)]            # K2 with kmap[q,K2] = K1
 
         # ---- mean field ------------------------------------------------
         fixed = kmap == np.arange(nk)[None, :]            # fixed[q, K]: block (K, K) lives in sector q
@@ -604,7 +599,45 @@ class HamiltonianCompact:
         return 2 * (P * Q).sum(axis=0)
 
     def compute_exchange(self, theta):
-        return -self._exchange_expression(theta, theta) + self._singularity_correction
+        e = self._exchange_direct(theta) if self.exchange_mode == "direct" else self._exchange_gram(theta)
+        return -e + self._singularity_correction
+
+    def _exchange_gram(self, theta):
+        """sum_q sum_{K2,Kb} theta[(K2,b2),(Kb,ob)] theta[(kmap[q,Kb],bp),(kmap[q,K2],oa)] G_q[(K2,b2,oa),(Kb,ob,bp)]."""
+        nk, nb, ne = self._nk, self._nb, self._ne
+        w = theta.shape[0]
+        tv = theta.reshape(w, nk, nb, nk, ne)                                      # (w,K,b,K',o)
+        th1 = tv.transpose(1, 3, 0, 2, 4).reshape(nk * nk, w, nb * ne)             # (K2,Kb | w | b2,ob)
+        total = 0
+        for q in range(nk):
+            kq = self._kq[q]
+            th2 = tv[:, kq][:, :, :, kq]                                           # (w, Kb, bp, K2, oa)
+            th2 = th2.transpose(3, 1, 0, 4, 2).reshape(nk * nk, w, ne * nb)        # (K2,Kb | w | oa,bp)
+            X = self._be.matmul(th1, self._G[q].reshape(nk * nk, nb * ne, ne * nb))  # (K2,Kb | w | oa,bp)
+            total = total + (X * th2).sum(axis=(0, 2))
+        return total
+
+    def _exchange_direct(self, theta, max_elements=2 * 10**8):
+        """Reference form: sum over every column g, E = sum_g sum_{ij} Y_g[j,i] Z_g[i,j] (no Gram precontraction).
+        Y_g[(Kj,oj),(Ki,oi)] = sum_b2 L[(Kj,oj),(K2,b2),g] theta[(K2,b2),(Ki,oi)], K2 = kmap^-1[q,Kj],
+        Z_g[(Ki,oi),(Kj,oj)] = sum_bp conj(L[(Ki,bp'),(Ki,oi),g]) theta[(kmap[q,Ki],bp),(Kj,oj)]. Walkers are chunked."""
+        nk, nb, ne, nmax = self._nk, self._nb, self._ne, self._nmax
+        be = self._be
+        w = theta.shape[0]
+        tv = theta.reshape(w, nk, nb, nk, ne)
+        chunk = max(1, int(max_elements // (nmax * (nk * ne) ** 2)))
+        out = []
+        for w0 in range(0, w, chunk):
+            tvc = tv[w0:w0 + chunk]
+            total = 0
+            for q in range(nk):
+                A = self._M[q].reshape(nmax, nk, nb, nb)                               # g, K2, b2, b1
+                kq, ki = self._kq[q], self._kinv[q]
+                Y = contract("gkbo, wkbiu -> wgkoiu", A[:, ki, :, :ne], tvc[:, ki])    # w,g,Kj,oj,Ki,oi
+                Z = contract("gkib, wkbju -> wgkiju", A[:, :, :ne, :].conj(), tvc[:, kq])  # w,g,Ki,oi,Kj,oj
+                total = total + contract("wgabcd, wgcdab -> w", Y, Z)
+            out.append(total)
+        return be.concatenate(out, axis=0) if len(out) > 1 else out[0]
 
     def create_random_field(self, config):
         if self.test_random_field is None:
