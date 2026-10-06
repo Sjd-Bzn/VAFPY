@@ -470,6 +470,122 @@ def obtain_Q_list(config, filename="Q_list.npy"):
     return ql.astype(np.int64, copy=False)
 
 
+# =========================================================================
+#  Compact H2 layout
+#
+#  Full:     L[(K1,b1), (K2,b2), g]     shape (nb*nk, nb*nk, ng_total)
+#  Compact:  Lc[(K2,b2), b1, g]         shape (nb*nk, nb,    ng_total)
+#
+#  The columns g are grouped in sectors of momentum transfer q (sector q
+#  holds the n_q columns [off_q, off_q + n_q)). For a given column k-point
+#  K2 and sector q the row k-point is fixed by momentum conservation,
+#  K1 = kmap[q, K2], and all other (K1, K2) blocks vanish, so
+#
+#       Lc[(K2,b2), b1, g] = L[(kmap[q(g),K2], b1), (K2,b2), g].
+#
+#  This is the layout written by the reduced VASP exporter, (ng*nk, nb,
+#  nb*nk) in numpy order, with the axes reversed.
+# =========================================================================
+def build_kmap(q_list, num_k):
+    """kmap[q, K2] = K1 (all zero-based) from the rows [K1, K2, Q] (one-based)
+    of the Q-list. Requires a unique K1 for every (K2, Q), i.e. exact
+    momentum conservation, and a complete list."""
+    kmap = -np.ones((num_k, num_k), dtype=np.int64)
+    for K1, K2, Q in np.asarray(q_list, dtype=np.int64):
+        old = kmap[Q - 1, K2 - 1]
+        if old >= 0 and old != K1 - 1:
+            raise ValueError(
+                f"Q-list maps (K2={K2}, Q={Q}) to two row k-points "
+                f"({old + 1} and {K1}); compact H2 needs momentum conservation."
+            )
+        kmap[Q - 1, K2 - 1] = K1 - 1
+    if np.any(kmap < 0):
+        raise ValueError("Q-list is incomplete: not every (K2, Q) has a K1.")
+    return kmap
+
+
+def sector_sizes_default(num_g_total, num_k):
+    """Equal split of the columns over the q sectors (uncompressed export)."""
+    if num_g_total % num_k != 0:
+        raise ValueError(
+            f"ng_total={num_g_total} is not divisible by num_k={num_k}; "
+            "supply the per-sector column counts (Q_sizes.npy)."
+        )
+    return np.full(num_k, num_g_total // num_k, dtype=np.int64)
+
+
+def sector_offsets(sizes):
+    return np.concatenate(([0], np.cumsum(sizes))).astype(np.int64)
+
+
+def is_compact_shape(shape, num_orb, num_k):
+    """True for (nb*nk, nb, ng). For num_k == 1 both layouts coincide and the
+    array is identical, so it is treated as dense."""
+    return len(shape) == 3 and num_k > 1 and shape[0] == num_orb * num_k \
+        and shape[1] == num_orb
+
+
+def dense_to_compact(h2_dense, kmap, sizes, num_orb):
+    """(nb*nk, nb*nk, ng) -> (nb*nk, nb, ng). Blocks that violate momentum
+    conservation must vanish; this is checked."""
+    nk = kmap.shape[0]
+    off = sector_offsets(sizes)
+    out = np.zeros((num_orb * nk, num_orb, h2_dense.shape[2]), dtype=h2_dense.dtype)
+    kept = 0.0
+    for q in range(nk):
+        cols = slice(off[q], off[q + 1])
+        for K2 in range(nk):
+            K1 = kmap[q, K2]
+            blk = h2_dense[K1 * num_orb:(K1 + 1) * num_orb,
+                           K2 * num_orb:(K2 + 1) * num_orb, cols]
+            out[K2 * num_orb:(K2 + 1) * num_orb, :, cols] = blk.transpose(1, 0, 2)
+            kept += np.sum(np.abs(blk) ** 2)
+    total = np.sum(np.abs(h2_dense) ** 2)
+    if abs(total - kept) > 1e-9 * max(total, 1.0):
+        raise ValueError("dense H2 has weight outside the momentum-conserving blocks")
+    return out
+
+
+def compact_to_dense(h2_compact, kmap, sizes, num_orb):
+    """(nb*nk, nb, ng) -> (nb*nk, nb*nk, ng)."""
+    nk = kmap.shape[0]
+    off = sector_offsets(sizes)
+    out = np.zeros((num_orb * nk, num_orb * nk, h2_compact.shape[2]),
+                   dtype=h2_compact.dtype)
+    for q in range(nk):
+        cols = slice(off[q], off[q + 1])
+        for K2 in range(nk):
+            K1 = kmap[q, K2]
+            out[K1 * num_orb:(K1 + 1) * num_orb,
+                K2 * num_orb:(K2 + 1) * num_orb, cols] = \
+                h2_compact[K2 * num_orb:(K2 + 1) * num_orb, :, cols].transpose(1, 0, 2)
+    return out
+
+
+def obtain_Q_sizes(config, filename="Q_sizes.npy"):
+    """Number of retained columns per q sector. Falls back to an equal split."""
+    filename = os.path.expanduser(filename)
+    if os.path.exists(filename):
+        sizes = np.load(filename).astype(np.int64).ravel()
+        if len(sizes) != config.num_kpoint or sizes.sum() != config.num_g:
+            raise ValueError(
+                f"{filename}: sizes {sizes.tolist()} inconsistent with "
+                f"num_k={config.num_kpoint}, NGVEC={config.num_g}")
+        return sizes
+    return sector_sizes_default(config.num_g, config.num_kpoint)
+
+
+def obtain_H2_host(config, filename="H2_zip.npy"):
+    """Load H2 (dense or compact) as a complex128 numpy array and report the
+    layout: returns (array, 'dense' | 'compact')."""
+    h2 = np.load(os.path.expanduser(filename)).astype(np.complex128)
+    if h2.shape[2] != config.num_g:
+        raise ValueError(f"H2 has {h2.shape[2]} columns, NGVEC={config.num_g}")
+    layout = "compact" if is_compact_shape(
+        h2.shape, config.num_orbital, config.num_kpoint) else "dense"
+    return h2, layout
+
+
 def initialize_determinant(config):
     """Block-diagonal multi-k trial determinant and initial walker copies."""
     single = config.backend.eye(
