@@ -599,7 +599,9 @@ class HamiltonianCompact:
         return 2 * self._one_body_expression(theta)
 
     def compute_hartree(self, theta):
-        return 2 * self._hartree_expression(theta, theta)
+        """E_H = 2 sum_g P_g Q_g, with the same two contractions as the force bias (raw L, no extra tensor)."""
+        P, Q = self._pq(theta)
+        return 2 * (P * Q).sum(axis=0)
 
     def compute_exchange(self, theta):
         return -self._exchange_expression(theta, theta) + self._singularity_correction
