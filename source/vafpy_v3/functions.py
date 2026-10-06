@@ -470,7 +470,7 @@ class HamiltonianCompact:
         ng = int(sizes.sum())
         if ng != config.num_g:
             raise ValueError(f"sector sizes sum to {ng}, NGVEC={config.num_g}")
-        Lc = be.to_numpy(self.two_body).astype(np.complex128)
+        Lc = np.asarray(be.to_numpy(self.two_body), dtype=np.complex128)
         if Lc.shape != (nbk, nb, ng):
             raise ValueError(f"compact H2 has shape {Lc.shape}, expected {(nbk, nb, ng)}")
         h1_host = be.to_numpy(self.one_body).astype(np.complex128)
@@ -532,6 +532,7 @@ class HamiltonianCompact:
                 h_sic[K * nb:(K + 1) * nb, K * nb:(K + 1) * nb] += np.einsum("cbg,cdg->bd", A, A.conj())
         h_sic *= -1.0 / (2 * nk)
         h1_total = h1_host + change / (2 * nk) + h_sic
+        self._L0, self._change, self._h_sic = L0, change, h_sic     # small (ng, nbk^2) pieces, kept for diagnostics
 
         h1_total_be = be.array(h1_total, dtype=config.complex_type)
         self._h1 = -h1_total_be * config.timestep
@@ -588,6 +589,7 @@ class HamiltonianCompact:
         self._ar_nek = np.arange(nek)
         self._eye = be.eye(nbk, dtype=config.complex_type)
         self._inv_sqrt_nk = float(1.0 / np.sqrt(nk))      # python float: keeps complex64 as complex64
+        self.two_body = None          # the raw tensor is not needed any more: only M, G and small constants stay
 
     # ------------------------------------------------------------------
     def compute_one_body(self, theta):
@@ -873,10 +875,8 @@ def build_hamiltonian(config, one_body, h2_host, layout, q_list, q_sizes=None):
         kmap = build_kmap(q_list, config.num_kpoint)
         if q_sizes is None:
             q_sizes = sector_sizes_default(config.num_g, config.num_kpoint)
-        return HamiltonianCompact(
-            one_body=one_body,
-            two_body=config.backend.array(h2_host, dtype=config.complex_type),
-            kmap=kmap, sizes=q_sizes, q_list=q_list)
+        # the compact tensor stays on the host in double precision until setup has built the working tensors
+        return HamiltonianCompact(one_body=one_body, two_body=h2_host, kmap=kmap, sizes=q_sizes, q_list=q_list)
     return Hamiltonian(
         one_body=one_body,
         two_body=config.backend.array(h2_host, dtype=config.complex_type),
