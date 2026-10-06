@@ -22,16 +22,19 @@ _DATA_ROOT = os.environ.get(
 KDIR = os.path.join(_DATA_ROOT, "test", "diamond_kpoint")
 SC = os.path.join(KDIR, "supercell_gamma")
 PR = os.path.join(KDIR, "primitive_k2x2x2")
+PRC = os.path.join(KDIR, "primitive_k2x2x2_compact")
 
 pytestmark = pytest.mark.skipif(
-    not (os.path.isdir(SC) and os.path.isdir(PR)),
+    not (os.path.isdir(SC) and os.path.isdir(PR) and os.path.isdir(PRC)),
     reason="k-point test data not found (set AFQMC_DATA)")
 
 # system definitions: (dir, num_k, orbitals per k, electrons per k, num_g)
 SYSTEMS = {
     "supercell": dict(dir=SC, num_k=1, num_orb=64, num_e=32, num_g=1769),
-    "primitive": dict(dir=PR, num_k=8, num_orb=8, num_e=4, num_g=1999),
+    "primitive": dict(dir=PR, num_k=8, num_orb=8, num_e=4, num_g=1999),                 # dense H2
+    "primitive_compact": dict(dir=PRC, num_k=8, num_orb=8, num_e=4, num_g=1999),         # compact H2
 }
+K_SYSTEMS = ("primitive", "primitive_compact")
 DTAU = 2.5e-4
 
 
@@ -44,10 +47,11 @@ def build(name, num_walkers=4, seed=12345, precision="Double"):
         num_electron=s["num_e"], num_g=s["num_g"], singularity=0.0, propagator="S2",
         order_propagation=6, timestep=DTAU, comm=MPI.COMM_WORLD, precision=precision, backend=backend)
     qfile = os.path.join(s["dir"], "Q_list.npy")
-    H = new.Hamiltonian(
-        one_body=new.obtain_H1(config, os.path.join(s["dir"], "H1_svd.npy")),
-        two_body=new.obtain_H2(config, os.path.join(s["dir"], "H2_zip.npy")),
-        q_list=new.obtain_Q_list(config, qfile))
+    h2, layout = new.obtain_H2_host(config, os.path.join(s["dir"], "H2_zip.npy"))
+    sizes = new.obtain_Q_sizes(config, os.path.join(s["dir"], "Q_sizes.npy")) if layout == "compact" else None
+    H = new.build_hamiltonian(
+        config, new.obtain_H1(config, os.path.join(s["dir"], "H1_svd.npy")), h2, layout,
+        new.obtain_Q_list(config, qfile), sizes)
     trial, walkers = new.initialize_determinant(config)
     H.setup_energy_expressions(config, trial)
     return config, H, trial, walkers
@@ -61,7 +65,8 @@ def test_hf_energy_primitive_equals_supercell():
         e1, eh, ex = new.measure_components(config, trial, walkers, H)
         e_tot = new.measure_energy(config, trial, walkers, H)[0]
         res[name] = np.array([e_tot.real, e1.real, eh.real, ex.real])
-    assert np.allclose(res["primitive"], res["supercell"], atol=1e-3), res
+    for name in K_SYSTEMS:
+        assert np.allclose(res[name], res["supercell"], atol=1e-3), (name, res)
     assert abs(res["supercell"][0] - 455.795) < 1e-2, res["supercell"]
 
 
@@ -79,7 +84,10 @@ def _mp2(name, scale):
     """MP2 from the exported (compressed) L in the HF-eigenstate basis; V(ia|jb) = scale * sum_G L_ia conj(L_jb)."""
     s = SYSTEMS[name]
     nk, no, nv = s["num_k"], s["num_e"], s["num_orb"] - s["num_e"]
-    L = np.load(os.path.join(s["dir"], "H2_zip.npy"))                    # (nb*nk, nb*nk, G)
+    L = np.load(os.path.join(s["dir"], "H2_zip.npy"))                    # (nb*nk, nb*nk, G) or compact
+    if new.is_compact_shape(L.shape, s["num_orb"], nk):
+        kmap = new.build_kmap(np.load(os.path.join(s["dir"], "Q_list.npy")).T, nk)
+        L = new.compact_to_dense(L, kmap, np.load(os.path.join(s["dir"], "Q_sizes.npy")), s["num_orb"])
     eps = np.load(os.path.join(s["dir"], "eigenvalues.npy"))[:, :, 0].T.ravel()   # index (k*nb + band)
     occ = np.array([k * s["num_orb"] + b for k in range(nk) for b in range(no)])
     vir = np.array([k * s["num_orb"] + b for k in range(nk) for b in range(no, s["num_orb"])])
@@ -95,11 +103,12 @@ def test_mp2_primitive_equals_supercell_with_1_over_nk():
     """The exported L is unscaled: the physical interaction is (1/nk) sum L L^+.
     MP2 in the identical orbital space must agree between supercell (nk=1) and primitive (nk=8, scale 1/8)."""
     mp2_sc = _mp2("supercell", 1.0)
-    mp2_pr = _mp2("primitive", 1.0 / SYSTEMS["primitive"]["num_k"])
-    assert abs(mp2_sc - mp2_pr) < 1e-3, (mp2_sc, mp2_pr)
+    for name in K_SYSTEMS:
+        mp2_pr = _mp2(name, 1.0 / SYSTEMS[name]["num_k"])
+        assert abs(mp2_sc - mp2_pr) < 1e-3, (name, mp2_sc, mp2_pr)
+        # sanity: without the 1/nk factor the energies would be wildly different
+        assert abs(_mp2(name, 1.0) - mp2_sc) > 100
     assert abs(mp2_sc - (-18.4343)) < 5e-3, mp2_sc
-    # sanity: without the 1/nk factor the energies would be wildly different
-    assert abs(_mp2("primitive", 1.0) - mp2_sc) > 100
 
 
 def _decay(name, num_walkers, nsteps, seed):
@@ -124,11 +133,12 @@ def test_short_time_energy_decay_primitive_equals_supercell():
     and a mis-scaled H_zero zeroes all weights."""
     nw, nsteps = 128, 8
     d_sc, w_sc = _decay("supercell", nw, nsteps, seed=1)
-    d_pr, w_pr = _decay("primitive", nw, nsteps, seed=2)
-    ratio = d_pr / d_sc
-    assert 0.8 < ratio < 1.25, (d_sc, d_pr, ratio)
-    for w in (w_sc, w_pr):
-        assert np.all(w > 0.9) and np.all(w < 1.1), w
+    assert np.all(w_sc > 0.9) and np.all(w_sc < 1.1), w_sc
+    for name in K_SYSTEMS:
+        d_pr, w_pr = _decay(name, nw, nsteps, seed=2)
+        ratio = d_pr / d_sc
+        assert 0.8 < ratio < 1.25, (name, d_sc, d_pr, ratio)
+        assert np.all(w_pr > 0.9) and np.all(w_pr < 1.1), (name, w_pr)
 
 
 def test_rebalance_global_single_precision():
