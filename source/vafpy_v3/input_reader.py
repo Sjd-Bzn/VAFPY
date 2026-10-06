@@ -72,6 +72,7 @@ def read(path="vafpy.in"):
     afqmc.input_file_one_body_hamil = inputs.get("H1FILE", "H1_svd.npy")
     afqmc.input_file_two_body_hamil = inputs.get("H2FILE", "H2_zip.npy")
     afqmc.q_list_file = inputs.get("QLIST", "Q_list.npy")
+    afqmc.q_sizes_file = inputs.get("QSIZES", "Q_sizes.npy")   # columns per q sector (compact H2)
 
     # Build single-k trial and block-diagonal multi-k trial
     psi_t_single = np.eye(afqmc.num_orb)[:, : afqmc.num_electrons_up]

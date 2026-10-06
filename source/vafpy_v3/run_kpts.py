@@ -65,11 +65,14 @@ def main():
     )
 
     q_list = new.obtain_Q_list(config, afqmc.q_list_file)
-    hamiltonian = new.Hamiltonian(
-        one_body=new.obtain_H1(config, afqmc.input_file_one_body_hamil),
-        two_body=new.obtain_H2(config, afqmc.input_file_two_body_hamil),
-        q_list=q_list,
-    )
+    h2_host, layout = new.obtain_H2_host(config, afqmc.input_file_two_body_hamil)
+    q_sizes = new.obtain_Q_sizes(config, afqmc.q_sizes_file) if layout == "compact" else None
+    if afqmc.first_cpu:
+        print("H2 layout            = ", layout, h2_host.shape)
+    hamiltonian = new.build_hamiltonian(
+        config, new.obtain_H1(config, afqmc.input_file_one_body_hamil),
+        h2_host, layout, q_list, q_sizes)
+    del h2_host
     trial_det, walkers = new.initialize_determinant(config)
     hamiltonian.setup_energy_expressions(config, trial_det)
 

@@ -439,6 +439,212 @@ class Hamiltonian:
         return self._exp_h1_half
 
 
+@dataclass
+class HamiltonianCompact:
+    """Same interface as Hamiltonian, but H2 is kept in the compact layout
+    Lc[(K2,b2), b1, g] (nb*nk, nb, ng_total); the dense (nb*nk, nb*nk, ng)
+    tensor is never built. Each momentum sector q has its own block structure
+    K1 = kmap[q, K2], which is used to gather the trial-dependent quantities.
+
+    The trial must be the block-diagonal HF determinant (first ne orbitals of
+    every k-point).
+    """
+    one_body: object        # (nb*nk, nb*nk)
+    two_body: object        # (nb*nk, nb, ng_total), raw (unscaled) L
+    kmap: object            # (nk, nk), kmap[q, K2] = K1
+    sizes: object           # (nk,), columns of every q sector
+    H_zero: complex = 0.0
+    q_list: object = None   # unused, kept for interface symmetry
+    test_random_field: object = None
+
+    # ------------------------------------------------------------------
+    def setup_energy_expressions(self, config, trial_det):
+        be = config.backend
+        self._be = be
+        nk, nb, ne = config.num_kpoint, config.num_orbital, config.num_electron
+        nbk, nek = nb * nk, ne * nk
+        kmap = np.asarray(self.kmap, dtype=np.int64)
+        sizes = np.asarray(self.sizes, dtype=np.int64)
+        off = sector_offsets(sizes)
+        ng = int(sizes.sum())
+        if ng != config.num_g:
+            raise ValueError(f"sector sizes sum to {ng}, NGVEC={config.num_g}")
+        Lc = be.to_numpy(self.two_body).astype(np.complex128)
+        if Lc.shape != (nbk, nb, ng):
+            raise ValueError(f"compact H2 has shape {Lc.shape}, expected {(nbk, nb, ng)}")
+        h1_host = be.to_numpy(self.one_body).astype(np.complex128)
+        trial_host = be.to_numpy(trial_det)
+        if not np.allclose(trial_host, block_diag(*([np.eye(nb, ne)] * nk))):
+            raise NotImplementedError("compact H2 requires the block-diagonal HF trial")
+        shape_theta = (config.num_walkers, nbk, nek)
+
+        # ---- one-body energy (as in the dense class) -------------------
+        h1_trial = contract("pi, pq -> iq", trial_det, self.one_body)
+        self._one_body_expression = contract_expression(
+            "ip, wpi -> w", h1_trial, shape_theta, constants=[0], optimize="greedy")
+
+        # ---- Hartree / exchange: W[i,r,j,p] = sum_g L[i_occ,r,g] conj(L[p,j_occ,g]) ----
+        occ_rows = np.array([K * nb + o for K in range(nk) for o in range(ne)])
+        W = np.zeros((nek, nbk, nek, nbk), dtype=np.complex128)
+        for q in range(nk):
+            cols = slice(off[q], off[q + 1])
+            A = Lc[:, :ne, cols].reshape(nbk * ne, -1)                 # (K2,b2,oa)
+            B = Lc[occ_rows][:, :, cols].reshape(nek * nb, -1)         # (Kb,ob,bp)
+            G = (A @ B.conj().T).reshape(nk, nb, ne, nk, ne, nb)       # K2,b2,oa,Kb,ob,bp
+            for K2 in range(nk):
+                Ka = kmap[q, K2]
+                for Kb in range(nk):
+                    Kp = kmap[q, Kb]
+                    W[Ka * ne:(Ka + 1) * ne, K2 * nb:(K2 + 1) * nb,
+                      Kb * ne:(Kb + 1) * ne, Kp * nb:(Kp + 1) * nb] += \
+                        G[K2, :, :, Kb, :, :].transpose(1, 0, 2, 3)
+        W_be = be.array(W, dtype=config.complex_type)
+        args = (shape_theta, shape_theta, W_be)
+        kwargs = {"constants": [2], "optimize": "greedy"}
+        self._hartree_expression = contract_expression("wri, wpj, irjp -> w", *args, **kwargs)
+        self._exchange_expression = contract_expression("wri, wpj, jrip -> w", *args, **kwargs)
+        self._singularity_correction = config.singularity * config.num_kpoint
+        del W, W_be
+
+        # ---- mean field ------------------------------------------------
+        fixed = kmap == np.arange(nk)[None, :]            # fixed[q, K]: block (K, K) lives in sector q
+        mf_sectors = [q for q in range(nk) if fixed[q].any()]
+        for q in mf_sectors:
+            if not fixed[q].all():
+                raise NotImplementedError(
+                    "sector with only some diagonal blocks: not a regular k-mesh")
+        L0 = np.zeros(ng, dtype=np.complex128)
+        for q in mf_sectors:
+            cols = slice(off[q], off[q + 1])
+            for K in range(nk):
+                L0[cols] += np.einsum("iig->g", Lc[K * nb:K * nb + ne, :ne, cols])
+        self.H_zero = 2 * np.einsum("g,g->", L0, L0.conj()) / (2 * ne * nk**2)
+
+        change = np.zeros((nbk, nbk), dtype=np.complex128)
+        Lmf = Lc.copy()
+        for q in mf_sectors:
+            cols = slice(off[q], off[q + 1])
+            avg = 2 * L0[cols]
+            for K in range(nk):
+                blk = Lc[K * nb:(K + 1) * nb, :, cols]                # blk[p, r, g] = L[(K,r),(K,p),g]
+                change[K * nb:(K + 1) * nb, K * nb:(K + 1) * nb] += \
+                    np.einsum("prg,g->rp", blk, avg.conj()) + np.einsum("rpg,g->rp", blk.conj(), avg)
+                for r in range(nb):
+                    Lmf[K * nb + r, r, cols] -= avg / (2 * ne * nk)
+        h_sic = np.zeros((nbk, nbk), dtype=np.complex128)
+        for q in range(nk):
+            cols = slice(off[q], off[q + 1])
+            for K2 in range(nk):
+                K = kmap[q, K2]
+                A = Lc[K2 * nb:(K2 + 1) * nb, :, cols]                 # (b2, b1, g)
+                h_sic[K * nb:(K + 1) * nb, K * nb:(K + 1) * nb] += np.einsum("cbg,cdg->bd", A, A.conj())
+        h_sic *= -1.0 / (2 * nk)
+        h1_total = h1_host + change / (2 * nk) + h_sic
+
+        h1_total_be = be.array(h1_total, dtype=config.complex_type)
+        self._h1 = -h1_total_be * config.timestep
+        self._exp_h1 = be.expm(-h1_total_be * config.timestep)
+        self._exp_h1_half = be.expm(-0.5 * h1_total_be * config.timestep)
+        self._sqrt_tau = be.sqrt(be.array(config.timestep)).astype(config.float_type)
+
+        # ---- propagation tensors: mean-field subtracted, scaled by 1/sqrt(nk), padded per sector ----
+        nmax = int(sizes.max())
+        Lp = np.zeros((nk, nk, nb, nb, nmax), dtype=np.complex128)      # q, K2, b2, b1, g
+        for q in range(nk):
+            n = sizes[q]
+            Lp[q, :, :, :, :n] = (Lmf[:, :, off[q]:off[q + 1]] / np.sqrt(nk)).reshape(nk, nb, nb, n)
+        Lp_be = be.array(Lp, dtype=config.complex_type)
+        self._nk, self._nb, self._ne, self._ng, self._nmax = nk, nb, ne, ng, nmax
+        self._Lp = Lp_be
+        self._Lp_conj = be.array(Lp.conj(), dtype=config.complex_type)
+        self._LpP = be.array(Lp[:, :, :, :ne, :], dtype=config.complex_type)                # q,K2,b2,o,g
+        self._LpQc = be.array(Lp[:, :, :ne, :, :].conj(), dtype=config.complex_type)        # q,K,o,b1,g (conj)
+
+        ar_nk = np.arange(nk)
+        b = np.arange(nb)
+        o = np.arange(ne)
+        self._rowsP = (ar_nk[None, :, None] * nb + b[None, None, :]) * np.ones((nk, 1, 1), dtype=np.int64)  # (q,K2,b2)
+        self._colsP = kmap[:, :, None] * ne + o[None, None, :]                                  # (q,K2,o)
+        self._rowsQ = kmap[:, :, None] * nb + b[None, None, :]                                  # (q,Ki,b1)
+        self._colsQ = (ar_nk[None, :, None] * ne + o[None, None, :]) * np.ones((nk, 1, 1), dtype=np.int64)  # (q,Ki,o)
+        qmap = np.zeros((nk, nk), dtype=np.int64)                                               # qmap[K1,K2] = q
+        for q in range(nk):
+            for K2 in range(nk):
+                qmap[kmap[q, K2], K2] = q
+        self._qmap, self._qmapT = qmap, qmap.T.copy()
+        self._ar = ar_nk
+        gidx = np.full((nk, nmax), ng, dtype=np.int64)                  # padded -> index of the zero row
+        valid = np.zeros(ng, dtype=np.int64)
+        for q in range(nk):
+            gidx[q, :sizes[q]] = np.arange(off[q], off[q + 1])
+            valid[off[q]:off[q + 1]] = q * nmax + np.arange(sizes[q])
+        self._gidx, self._valid = gidx, valid
+
+    # ------------------------------------------------------------------
+    def compute_one_body(self, theta):
+        return 2 * self._one_body_expression(theta)
+
+    def compute_hartree(self, theta):
+        return 2 * self._hartree_expression(theta, theta)
+
+    def compute_exchange(self, theta):
+        return -self._exchange_expression(theta, theta) + self._singularity_correction
+
+    def create_random_field(self, config):
+        if self.test_random_field is None:
+            return config.backend.random_normal(
+                (2 * config.num_g, config.num_walkers), config.float_type)
+        return self.test_random_field
+
+    # ------------------------------------------------------------------
+    def _force_bias(self, theta):
+        """(2*ng, nw): [ (P+Q)/2 ; i(P-Q)/2 ], P = sum theta L[i_occ, r], Q = sum theta conj(L[r, i_occ])."""
+        nw = theta.shape[0]
+        th_P = theta[:, self._rowsP[:, :, :, None], self._colsP[:, :, None, :]]   # w,q,K2,b2,o
+        th_Q = theta[:, self._rowsQ[:, :, :, None], self._colsQ[:, :, None, :]]   # w,q,Ki,b1,o
+        P = contract("wqkbo, qkbog -> qgw", th_P, self._LpP)
+        Q = contract("wqkbo, qkobg -> qgw", th_Q, self._LpQc)
+        P = P.reshape(self._nk * self._nmax, nw)[self._valid]
+        Q = Q.reshape(self._nk * self._nmax, nw)[self._valid]
+        return self._be.concatenate([(P + Q) / 2, 1j * (P - Q) / 2], axis=0)
+
+    def _auxiliary_field(self, x):
+        """sum_g A_e x_e + A_o x_o as a dense (nb*nk, nb*nk, nw) matrix, A_e = (L+L^+)/2, A_o = i(L-L^+)/2."""
+        nk, nb, ng = self._nk, self._nb, self._ng
+        nw = x.shape[1]
+        be = self._be
+        u = (x[:ng] + 1j * x[ng:]) / 2
+        v = (x[:ng] - 1j * x[ng:]) / 2
+        zero = be.zeros((1, nw), dtype=u.dtype)
+        u_pad = be.concatenate([u, zero], axis=0)[self._gidx]                     # q,g,w
+        v_pad = be.concatenate([v, zero], axis=0)[self._gidx]
+        R1 = contract("qkabg, qgw -> qkabw", self._Lp, u_pad)                     # q,K2,b2,b1,w
+        R2 = contract("qkabg, qgw -> qkabw", self._Lp_conj, v_pad)
+        F1 = R1[self._qmap, self._ar[None, :]].transpose(0, 3, 1, 2, 4)           # K1,b1,K2,b2,w
+        F2 = R2[self._qmapT, self._ar[:, None]].transpose(0, 2, 1, 3, 4)          # Ki,bi,Kj,bj,w
+        return (F1 + F2).reshape(nk * nb, nk * nb, nw)
+
+    def create_auxiliary_field(self, config, theta):
+        random_field = self.create_random_field(config)
+        force_bias = -2j * self._sqrt_tau * self._force_bias(theta)
+        force_bias = config.backend.where(abs(force_bias) > 1, 0.0, force_bias)
+        arg = contract("gw, gw -> w", random_field - 0.5 * force_bias, force_bias)
+        field = 1j * self._sqrt_tau * self._auxiliary_field(random_field - force_bias)
+        return field, config.backend.exp(arg)
+
+    @property
+    def h1(self):
+        return self._h1
+
+    @property
+    def exp_h1(self):
+        return self._exp_h1
+
+    @property
+    def exp_h1_half(self):
+        return self._exp_h1_half
+
+
 # =========================================================================
 #  I/O
 # =========================================================================
@@ -584,6 +790,26 @@ def obtain_H2_host(config, filename="H2_zip.npy"):
     layout = "compact" if is_compact_shape(
         h2.shape, config.num_orbital, config.num_kpoint) else "dense"
     return h2, layout
+
+
+def build_hamiltonian(config, one_body, h2_host, layout, q_list, q_sizes=None):
+    """Hamiltonian for a dense or compact H2 (layout from obtain_H2_host).
+
+    dense   -> Hamiltonian (reference path, dense (nb*nk, nb*nk, ng) tensor)
+    compact -> HamiltonianCompact (momentum-conserving blocks only)
+    """
+    if layout == "compact":
+        kmap = build_kmap(q_list, config.num_kpoint)
+        if q_sizes is None:
+            q_sizes = sector_sizes_default(config.num_g, config.num_kpoint)
+        return HamiltonianCompact(
+            one_body=one_body,
+            two_body=config.backend.array(h2_host, dtype=config.complex_type),
+            kmap=kmap, sizes=q_sizes, q_list=q_list)
+    return Hamiltonian(
+        one_body=one_body,
+        two_body=config.backend.array(h2_host, dtype=config.complex_type),
+        q_list=q_list)
 
 
 def initialize_determinant(config):
