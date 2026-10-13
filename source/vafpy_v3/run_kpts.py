@@ -129,6 +129,11 @@ def main():
         if j % afqmc.SAMP_FREQ == 0:
             a = new.measure_energy(config, trial_det, walkers, hamiltonian)
             energy_new = a[0]
+            if not np.isfinite(energy_new):
+                file_out.flush()
+                weights_file.flush()
+                raise FloatingPointError(
+                    f"non-finite local energy at step {j} (tau*step = {j * afqmc.D_TAU})")
             b = a[1]
             c = a[2]
             e_hf = (e_hf * j + energy_new) / (j + 1)
@@ -190,5 +195,17 @@ def main():
             outcar.write(f"Total number of rare events = {rare_event_total}\n")
 
 
+def run():
+    """Run main(); if any rank fails, stop the whole MPI job instead of leaving the others waiting."""
+    try:
+        main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        MPI.COMM_WORLD.Abort(1)
+
+
 if __name__ == "__main__":
-    main()
+    run()
