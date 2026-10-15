@@ -3,6 +3,7 @@ import os
 import sys
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 import functions as new
@@ -42,3 +43,30 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_reortho_methods_on_jax_backend():
+    """QR and Cholesky both orthonormalise on JAX and span the same space; Auto is Cholesky on JAX and QR on NumPy."""
+    rng = np.random.default_rng(3)
+    A = rng.standard_normal((4, 20, 6)) + 1j * rng.standard_normal((4, 20, 6))
+
+    class Cfg:
+        pass
+
+    cj, cn = Cfg(), Cfg()
+    cj.backend, cn.backend = new.make_backend("jax", 1), new.make_backend("numpy", 1)
+    Aj = cj.backend.array(A.astype(np.complex64))
+    q_qr = np.asarray(new.reortho_qr(cj, Aj, "QR"))
+    q_ch = np.asarray(new.reortho_qr(cj, Aj, "Cholesky"))
+    q_auto = np.asarray(new.reortho_qr(cj, Aj))
+    for q in (q_qr, q_ch):
+        gram = np.einsum("wmi,wmj->wij", q.conj(), q)
+        assert np.abs(gram - np.eye(6)).max() < 1e-4
+    # same column space: projector Q Q^H agrees
+    p = lambda q: np.einsum("wmi,wni->wmn", q, q.conj())
+    assert np.abs(p(q_qr) - p(q_ch)).max() < 1e-4
+    assert np.array_equal(q_auto, q_ch)
+    q_np = np.asarray(new.reortho_qr(cn, A))
+    assert np.abs(p(q_np) - p(q_qr)).max() < 1e-4
+    with pytest.raises(ValueError):
+        new.reortho_qr(cj, Aj, "bogus")

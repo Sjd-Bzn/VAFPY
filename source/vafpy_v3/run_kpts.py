@@ -147,10 +147,7 @@ def main():
                     file_out.flush()
 
         if j % afqmc.REORTHO_PERIODICITY == 0:
-            if afqmc.REORTHO_METHOD == "Cholesky":
-                walkers.slater_det = new.cholesky_orthonormalize_complex_jax(walkers.slater_det)
-            else:
-                walkers.slater_det = new.reortho_qr(config, walkers.slater_det)
+            walkers.slater_det = new.reortho_qr(config, walkers.slater_det, afqmc.REORTHO_METHOD)
 
         if afqmc.REBAL_PERIODICITY != 0 and j % afqmc.REBAL_PERIODICITY == 0:
             if afqmc.REBAL_METHOD == "global":

@@ -1315,10 +1315,19 @@ def cholesky_orthonormalize_complex_jax(walkers):
     return jax.vmap(ortho_single)(walkers)
 
 
-def reortho_qr(config, walker_matrix):
-    """Reorthogonalize walkers. Uses Cholesky on JAX (GPU-optimised), QR otherwise."""
-    if isinstance(config.backend, JaxBackend):
+def reortho_qr(config, walker_matrix, method="Auto"):
+    """Reorthogonalize walkers.
+
+    method "QR"       : QR of the backend (numpy / jax.numpy / cupy).
+    method "Cholesky" : Cholesky of the Gram matrix (JAX implementation, any backend).
+    method "Auto"     : Cholesky on the JAX backend, QR otherwise.
+    """
+    if method == "Auto":
+        method = "Cholesky" if isinstance(config.backend, JaxBackend) else "QR"
+    if method == "Cholesky":
         return cholesky_orthonormalize_complex_jax(walker_matrix)
+    if method != "QR":
+        raise ValueError(f"unknown reorthogonalisation method {method!r} (QR, Cholesky or Auto)")
     Q, _ = config.backend.qr(walker_matrix)
     return Q
 
