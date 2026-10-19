@@ -94,7 +94,7 @@ def main():
         print()
 
     # Per-walker constant factor used by S2 propagator.
-    h_0 = np.exp(config.timestep * hamiltonian.H_zero)
+    h_0 = config.complex_type(np.exp(config.timestep * hamiltonian.H_zero))
 
     # Open output files
     wr_name = "WALKERS.npy"
