@@ -1367,25 +1367,25 @@ def rebalance_comb(config, weights):
 
 
 def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
-    """Global rebalance across MPI ranks."""
-    # LOCAL FIX: buffers below are complex128; MPI Gather with complex64 (Single precision) input
-    # reinterprets bytes -> garbage/inf weights. Work in complex128 here (caller casts back).
-    walkers_mats_up = np.asarray(walkers_mats_up, dtype=np.complex128)
-    walkers_weights = np.asarray(walkers_weights, dtype=np.complex128)
+    """Global rebalance across MPI ranks.
+
+    The walker matrices are gathered and scattered in their own precision (complex64 for Single, complex128 for Double);
+    only the weights, which are real here, are handled as float64 for the resampling bookkeeping.
+    """
+    mats = np.ascontiguousarray(walkers_mats_up)
+    local_weights = np.ascontiguousarray(np.asarray(walkers_weights).real, dtype=np.float64)
     rank = comm.Get_rank()
     size = comm.Get_size()
-    local_n, n_orb, n_elec = walkers_mats_up.shape
+    local_n, n_orb, n_elec = mats.shape
     total_n = local_n * size
 
-    all_weights = None
-    if rank == 0:
-        all_weights = np.empty(total_n, dtype=np.complex128)
-    comm.Gather(walkers_weights, all_weights, root=0)
+    all_weights = np.empty(total_n, dtype=np.float64) if rank == 0 else None
+    comm.Gather(local_weights, all_weights, root=0)
 
     instances = None
     if rank == 0:
-        norm = total_n / np.sum(all_weights.real)
-        norm_w = all_weights.real * norm
+        norm = total_n / np.sum(all_weights)
+        norm_w = all_weights * norm
         bias = -float(config.backend.random_uniform_scalar())
         instances = np.zeros(total_n, dtype=int)
         cum = bias
@@ -1400,23 +1400,16 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
         instances = np.empty(total_n, dtype=int)
     comm.Bcast(instances, root=0)
 
-    map_indices = np.empty(int(np.sum(instances)), dtype=int)
-    count = 0
-    for idx, n in enumerate(instances):
-        for _ in range(n):
-            map_indices[count] = idx
-            count += 1
+    map_indices = np.repeat(np.arange(total_n), instances)
     assert len(map_indices) == total_n
 
-    all_mats = None
-    if rank == 0:
-        all_mats = np.empty((total_n, n_orb, n_elec), dtype=np.complex128)
-    comm.Gather(walkers_mats_up, all_mats, root=0)
+    all_mats = np.empty((total_n, n_orb, n_elec), dtype=mats.dtype) if rank == 0 else None
+    comm.Gather(mats, all_mats, root=0)
 
     resampled = all_mats[map_indices] if rank == 0 else None
-    new_mats = np.empty((local_n, n_orb, n_elec), dtype=np.complex128)
+    new_mats = np.empty((local_n, n_orb, n_elec), dtype=mats.dtype)
     comm.Scatter(resampled, new_mats, root=0)
-    new_weights = np.ones(local_n, dtype=np.complex128)
+    new_weights = np.ones(local_n, dtype=mats.dtype)
     return new_mats, new_weights
 
 
