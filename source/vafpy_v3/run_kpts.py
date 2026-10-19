@@ -180,14 +180,18 @@ def main():
     col = data[:, 1]
     st = int(len(col) * afqmc.EQUILIBRATION)
     en = len(col)
-    v, blockVar, blockMean = new.blockAverage(col[st:en], afqmc.block_divisor)
+    # standard error of the mean from the integrated autocorrelation time
+    std_err, tau_int, tau_window_closed = new.autocorr_error(col[st:en])
     if afqmc.first_cpu:
-        print("E_gs_afqmc =", np.mean(col[st:en]),
-              "+-", np.sqrt(max(blockVar)) if len(blockVar) else float("nan"))
+        print("E_gs_afqmc =", np.mean(col[st:en]), "+-", std_err)
+        print("Integrated autocorrelation time (samples) =", tau_int)
+        if not tau_window_closed:
+            print("WARNING: the autocorrelation window did not close; the series is too short for a reliable error.")
         with open("outcar.txt", "a") as outcar:
             outcar.write("Calculating ground state energy\n")
             outcar.write(f"E_gs_afqmc = {np.mean(col[st:en])}\n")
-            outcar.write(f"+- {np.sqrt(max(blockVar)) if len(blockVar) else float('nan')}\n")
+            outcar.write(f"+- {std_err}\n")
+            outcar.write(f"Integrated autocorrelation time (samples) = {tau_int}\n")
             outcar.write(f"Number of steps with rare events = {rare_event_steps}\n")
             outcar.write(f"Total number of rare events = {rare_event_total}\n")
 
