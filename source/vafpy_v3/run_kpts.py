@@ -185,7 +185,14 @@ def main():
     std_err, tau_int, tau_window_closed = new.autocorr_error(col[st:en])
     if afqmc.first_cpu:
         print("E_gs_afqmc =", np.mean(col[st:en]), "+-", std_err)
+        # variance of the mean = 2 tau_int var / N; correlation length = 2 tau_int (samples per independent sample)
+        var_series = float(np.var(col[st:en], ddof=1))
+        var_of_mean = std_err**2
+        correlation_length = 2.0 * tau_int
+        print("Variance of the energy series =", var_series)
+        print("Variance of the mean =", var_of_mean)
         print("Integrated autocorrelation time (samples) =", tau_int)
+        print("Correlation length =", correlation_length)
         if not tau_window_closed:
             print("WARNING: the autocorrelation window did not close; the series is too short for a reliable error.")
         # statistics report: equilibration region, blocking curve, autocorrelation (figure only if matplotlib is available)
@@ -202,7 +209,10 @@ def main():
             outcar.write("Calculating ground state energy\n")
             outcar.write(f"E_gs_afqmc = {np.mean(col[st:en])}\n")
             outcar.write(f"+- {std_err}\n")
+            outcar.write(f"Variance of the energy series = {var_series}\n")
+            outcar.write(f"Variance of the mean = {var_of_mean}\n")
             outcar.write(f"Integrated autocorrelation time (samples) = {tau_int}\n")
+            outcar.write(f"Correlation length = {correlation_length}\n")
             if stat_report is not None:
                 for line in stat_analysis.summary_lines(stat_report):
                     outcar.write(line + "\n")
