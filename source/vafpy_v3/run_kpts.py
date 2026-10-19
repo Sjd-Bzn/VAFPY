@@ -12,6 +12,7 @@ from os.path import exists
 
 import input_reader
 import functions as new
+import stat_analysis
 
 
 def main():
@@ -187,11 +188,24 @@ def main():
         print("Integrated autocorrelation time (samples) =", tau_int)
         if not tau_window_closed:
             print("WARNING: the autocorrelation window did not close; the series is too short for a reliable error.")
+        # statistics report: equilibration region, blocking curve, autocorrelation (figure only if matplotlib is available)
+        stat_report = None
+        try:
+            stat_report = stat_analysis.analyse(data[:, 0], col, afqmc.EQUILIBRATION)
+            stat_analysis.write_figure(stat_report, "stat_analysis.png", title=afqmc.output_file)
+        except Exception as exc:
+            print("WARNING: statistics report failed:", exc)
+        if stat_report is not None:
+            for line in stat_analysis.summary_lines(stat_report):
+                print(line)
         with open("outcar.txt", "a") as outcar:
             outcar.write("Calculating ground state energy\n")
             outcar.write(f"E_gs_afqmc = {np.mean(col[st:en])}\n")
             outcar.write(f"+- {std_err}\n")
             outcar.write(f"Integrated autocorrelation time (samples) = {tau_int}\n")
+            if stat_report is not None:
+                for line in stat_analysis.summary_lines(stat_report):
+                    outcar.write(line + "\n")
             outcar.write(f"Number of steps with rare events = {rare_event_steps}\n")
             outcar.write(f"Total number of rare events = {rare_event_total}\n")
 
