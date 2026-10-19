@@ -38,7 +38,7 @@ def reshape_H1(H1, num_k, num_orb):
     Input H1 has shape (num_orb, num_orb, num_k); output is
     (num_orb*num_k, num_orb*num_k) with each k-block on the diagonal.
     """
-    h1 = np.zeros([num_orb * num_k, num_orb * num_k], dtype=np.complex128)
+    h1 = np.zeros([num_orb * num_k, num_orb * num_k], dtype=H1.dtype)
     for i in range(num_k):
         h1[i * num_orb:(i + 1) * num_orb, i * num_orb:(i + 1) * num_orb] = H1[:, :, i]
     return h1
@@ -823,6 +823,7 @@ class HamiltonianCompact:
     def setup_energy_expressions(self, config, trial_det):
         be = config.backend
         self._be = be
+        wt = np.dtype(config.complex_type)      # host arrays of the setup are in the working precision
         nk, nb, ne = config.num_kpoint, config.num_orbital, config.num_electron
         nbk, nek = nb * nk, ne * nk
         kmap = np.asarray(self.kmap, dtype=np.int64)
@@ -831,10 +832,10 @@ class HamiltonianCompact:
         ng = int(sizes.sum())
         if ng != config.num_g:
             raise ValueError(f"sector sizes sum to {ng}, NGVEC={config.num_g}")
-        Lc = np.asarray(be.to_numpy(self.two_body), dtype=np.complex128)
+        Lc = np.asarray(be.to_numpy(self.two_body), dtype=wt)
         if Lc.shape != (nbk, nb, ng):
             raise ValueError(f"compact H2 has shape {Lc.shape}, expected {(nbk, nb, ng)}")
-        h1_host = be.to_numpy(self.one_body).astype(np.complex128)
+        h1_host = be.to_numpy(self.one_body).astype(wt)
         trial_host = be.to_numpy(trial_det)
         if not np.allclose(trial_host, block_diag(*([np.eye(nb, ne)] * nk))):
             raise NotImplementedError("compact H2 requires the block-diagonal HF trial")
@@ -849,7 +850,7 @@ class HamiltonianCompact:
         # G[q, K2, Kb, (b2,ob), (oa,bp)] = sum_{g in q} Lc[(K2,b2),oa,g] conj(Lc[(Kb,ob),bp,g]); the row k-points of
         # both factors (kmap[q,K2], kmap[q,Kb]) are implicit, so no zero blocks are stored.
         occ_rows = np.array([K * nb + o for K in range(nk) for o in range(ne)])
-        G = np.zeros((nk, nk, nk, nb * ne, ne * nb), dtype=np.complex128)
+        G = np.zeros((nk, nk, nk, nb * ne, ne * nb), dtype=wt)
         for q in range(nk):
             cols = slice(off[q], off[q + 1])
             A = Lc[:, :ne, cols].reshape(nbk * ne, -1)                 # (K2,b2,oa)
@@ -869,14 +870,14 @@ class HamiltonianCompact:
             if not fixed[q].all():
                 raise NotImplementedError(
                     "sector with only some diagonal blocks: not a regular k-mesh")
-        L0 = np.zeros(ng, dtype=np.complex128)
+        L0 = np.zeros(ng, dtype=wt)
         for q in mf_sectors:
             cols = slice(off[q], off[q + 1])
             for K in range(nk):
                 L0[cols] += np.einsum("iig->g", Lc[K * nb:K * nb + ne, :ne, cols])
         self.H_zero = 2 * np.einsum("g,g->", L0, L0.conj()) / (2 * ne * nk**2)
 
-        change = np.zeros((nbk, nbk), dtype=np.complex128)
+        change = np.zeros((nbk, nbk), dtype=wt)
         for q in mf_sectors:
             cols = slice(off[q], off[q + 1])
             avg = 2 * L0[cols]
@@ -884,7 +885,7 @@ class HamiltonianCompact:
                 blk = Lc[K * nb:(K + 1) * nb, :, cols]                # blk[p, r, g] = L[(K,r),(K,p),g]
                 change[K * nb:(K + 1) * nb, K * nb:(K + 1) * nb] += \
                     np.einsum("prg,g->rp", blk, avg.conj()) + np.einsum("rpg,g->rp", blk.conj(), avg)
-        h_sic = np.zeros((nbk, nbk), dtype=np.complex128)
+        h_sic = np.zeros((nbk, nbk), dtype=wt)
         for q in range(nk):
             cols = slice(off[q], off[q + 1])
             for K2 in range(nk):
@@ -908,14 +909,14 @@ class HamiltonianCompact:
 
         # ---- single padded compact tensor for batched matrix products -------------------------------------
         # M[q, g, (K2,b2,b1)] = Lc[(K2,b2), b1, off_q + g]: rows are the columns g of sector q.
-        M = np.zeros((nk, nmax, nk * nb * nb), dtype=np.complex128)
+        M = np.zeros((nk, nmax, nk * nb * nb), dtype=wt)
         for q in range(nk):
             n = sizes[q]
             M[q, :n, :] = Lc[:, :, off[q]:off[q + 1]].reshape(nk * nb * nb, n).T
         self._M = be.array(M, dtype=config.complex_type)
         del M
         # mean-field shift: L_mf = L - c_g on the diagonal blocks of the sector(s) with fixed points
-        c = np.zeros(ng, dtype=np.complex128)
+        c = np.zeros(ng, dtype=wt)
         for q in mf_sectors:
             c[off[q]:off[q + 1]] = L0[off[q]:off[q + 1]] / (ne * nk)
         self._c = be.array(c[:, None], dtype=config.complex_type)
@@ -1010,7 +1011,7 @@ class HamiltonianCompact:
 # =========================================================================
 def obtain_H1(config, filename="H1_svd.npy"):
     """Load per-k H1 and assemble block-diagonal multi-k matrix."""
-    h1_per_k = np.load(os.path.expanduser(filename)).astype(np.complex128)
+    h1_per_k = np.load(os.path.expanduser(filename)).astype(np.dtype(config.complex_type))
     # Expected shape (num_orb, num_orb, num_k) — what opt/vasp produce.
     if h1_per_k.ndim == 2:
         h1_per_k = h1_per_k[:, :, None]
@@ -1142,9 +1143,9 @@ def obtain_Q_sizes(config, filename="Q_sizes.npy"):
 
 
 def obtain_H2_host(config, filename="H2_zip.npy"):
-    """Load H2 (dense or compact) as a complex128 numpy array and report the
+    """Load H2 (dense or compact) as a numpy array in the working precision and report the
     layout: returns (array, 'dense' | 'compact')."""
-    h2 = np.load(os.path.expanduser(filename)).astype(np.complex128)
+    h2 = np.load(os.path.expanduser(filename)).astype(np.dtype(config.complex_type))
     if h2.shape[2] != config.num_g:
         raise ValueError(f"H2 has {h2.shape[2]} columns, NGVEC={config.num_g}")
     layout = "compact" if is_compact_shape(
@@ -1162,7 +1163,7 @@ def build_hamiltonian(config, one_body, h2_host, layout, q_list, q_sizes=None):
         kmap = build_kmap(q_list, config.num_kpoint)
         if q_sizes is None:
             q_sizes = sector_sizes_default(config.num_g, config.num_kpoint)
-        # the compact tensor stays on the host in double precision until setup has built the working tensors
+        # the compact tensor stays on the host, in the working precision, until setup has built the device tensors
         return HamiltonianCompact(one_body=one_body, two_body=h2_host, kmap=kmap, sizes=q_sizes, q_list=q_list)
     return Hamiltonian(
         one_body=one_body,
