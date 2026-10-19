@@ -39,3 +39,23 @@ def test_autocorr_error_series_much_slower_than_its_length_is_flagged(package):
     functions = pytest.importorskip(f"{package}.functions")
     x = _ar1(200, 5000.0, np.random.default_rng(1))
     assert functions.autocorr_error(x)[2] is False
+
+
+@pytest.mark.parametrize("package", ["vafpy", "vafpy_v1"])
+def test_statistics_report(package, tmp_path):
+    functions = pytest.importorskip(f"{package}.functions")
+    stat_analysis = pytest.importorskip(f"{package}.stat_analysis")
+    rng = np.random.default_rng(2)
+    n = 8000
+    energy = 10.0 + _ar1(n, 20.0, rng)
+    energy[:300] += 5.0 * np.exp(-np.arange(300) / 60.0)          # equilibration transient
+    time = 0.001 * np.arange(1, n + 1)
+    report = stat_analysis.analyse(time, energy, 0.12)
+    err = functions.autocorr_error(energy[int(n * 0.12):])[0]
+    assert report["error"] == pytest.approx(err, rel=1e-10)
+    assert report["start"] == int(n * 0.12)
+    assert any("Equilibration region" in line for line in stat_analysis.summary_lines(report))
+    assert report["scan"][0, 1] > report["scan"][-1, 1]            # the transient raises the mean when nothing is discarded
+    pytest.importorskip("matplotlib")
+    assert stat_analysis.write_figure(report, str(tmp_path / "stat_analysis.png"), title="test")
+    assert (tmp_path / "stat_analysis.png").stat().st_size > 10000

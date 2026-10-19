@@ -12,6 +12,7 @@ from os.path import exists
 log_file = 'log'
 #sys.stdout = open(log_file, "w")
 import vafpy.functions as new
+from vafpy import stat_analysis
 
 
 def main():
@@ -517,6 +518,13 @@ def main():
         e1_afqmc = float(np.mean(data_e1[st:en]))
         hartree_afqmc = float(np.mean(data_hartree[st:en]))
         exchange_afqmc = float(np.mean(data_exchange[st:en]))
+        # statistics report: equilibration region, blocking curve, autocorrelation (figure only if matplotlib is available)
+        stat_report = None
+        try:
+            stat_report = stat_analysis.analyse(data1[:, 0], data1[:, 1], afqmc.EQUILIBRATION)
+            stat_analysis.write_figure(stat_report, 'stat_analysis.png', title=afqmc.output_file)
+        except Exception as exc:
+            print('WARNING: statistics report failed:', exc)
     if afqmc.first_cpu:
         print()
         print('Calculating ground state energy...')
@@ -528,6 +536,9 @@ def main():
         print ('Correlation length = ', correlation_length)
         if not tau_window_closed:
             print('WARNING: the autocorrelation window did not close; the series is too short for a reliable error.')
+        if stat_report is not None:
+            for line in stat_analysis.summary_lines(stat_report):
+                print(line)
         print('Total number of the rare event= ', rare_event_total_count)
         print('Numver of steps with rare events= ', rare_event_steps_count)
         print()
@@ -561,6 +572,9 @@ def main():
             outcar.write(f"Variance of the mean = {var_of_mean}\n")
             outcar.write(f"Integrated autocorrelation time (samples) = {tau_int}\n")
             outcar.write(f"Correlation length = {correlation_length}\n")
+            if stat_report is not None:
+                for line in stat_analysis.summary_lines(stat_report):
+                    outcar.write(line + "\n")
             outcar.write(f"Correlation Energy = {correlation_energy}\n")
             outcar.write(f"Number of steps with rare events = {rare_event_steps_count}\n")
             outcar.write(f"Total number of rare events = {rare_event_total_count}\n")
