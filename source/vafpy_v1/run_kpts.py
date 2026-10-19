@@ -514,9 +514,10 @@ def main():
         e_gs_afqmc = np.mean(data[st:en])
         # standard error of the mean from the integrated autocorrelation time
         std_err, tau_int, tau_window_closed = new.autocorr_error(data[st:en, 0])
-        var_of_mean = std_err**2
+        var_of_mean = std_err**2                  # variance of the mean = 2 tau_int var / N
+        var_series = float(np.var(data[st:en, 0], ddof=1))   # variance of the energy samples
         correlation_energy = e_gs_afqmc - E_HF
-        correlation_length = tau_int - 0.5
+        correlation_length = 2.0 * tau_int       # statistical inefficiency (samples per independent sample)
         e1_afqmc = float(np.mean(data_e1[st:en]))
         hartree_afqmc = float(np.mean(data_hartree[st:en]))
         exchange_afqmc = float(np.mean(data_exchange[st:en]))
@@ -533,6 +534,7 @@ def main():
         print()
         print ('E_gs_afqmc = ', e_gs_afqmc, '+-', std_err)
         print ('Correlation Energy = ', correlation_energy)
+        print ('Variance of the energy series = ', var_series)
         print ('Variance of the mean = ', var_of_mean)
         print ('Integrated autocorrelation time (samples) = ', tau_int)
         print ('Correlation length = ', correlation_length)
@@ -571,6 +573,7 @@ def main():
             outcar.write("Calculating ground state energy\n")
             outcar.write(f"E_gs_afqmc = {e_gs_afqmc}\n")
             outcar.write(f"+- {std_err}\n")
+            outcar.write(f"Variance of the energy series = {var_series}\n")
             outcar.write(f"Variance of the mean = {var_of_mean}\n")
             outcar.write(f"Integrated autocorrelation time (samples) = {tau_int}\n")
             outcar.write(f"Correlation length = {correlation_length}\n")

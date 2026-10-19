@@ -54,6 +54,9 @@ def test_statistics_report(package, tmp_path):
     err = functions.autocorr_error(energy[int(n * 0.12):])[0]
     assert report["error"] == pytest.approx(err, rel=1e-10)
     assert report["start"] == int(n * 0.12)
+    nprod = n - report["start"]
+    assert report["corr_len"] == pytest.approx(2.0 * report["tau"])
+    assert report["var_mean"] == pytest.approx(report["var_series"] * report["corr_len"] / nprod)
     assert any("Equilibration region" in line for line in stat_analysis.summary_lines(report))
     assert report["scan"][0, 1] > report["scan"][-1, 1]            # the transient raises the mean when nothing is discarded
     pytest.importorskip("matplotlib")

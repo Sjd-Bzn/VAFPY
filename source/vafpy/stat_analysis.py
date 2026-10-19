@@ -1,5 +1,12 @@
 """Statistics report of an AFQMC energy series.
 
+Definitions (x = production region, N samples, sigma^2 = sample variance of x):
+  tau_int         = 1/2 + sum_{t>=1} rho(t), summed up to the automatic window W >= c*tau_int(W)
+  variance of the mean    = 2 tau_int sigma^2 / N  (= error^2)
+  correlation length      = 2 tau_int = (variance of the mean) / (sigma^2 / N), in samples:
+                            the number of consecutive samples that carry the information of one independent sample
+                            (the definition used by qmcfort)
+
 analyse() returns the numbers (error from the integrated autocorrelation time, equilibration check);
 write_figure() draws them (matplotlib is optional):
   1. energy trace with the equilibration region (discarded) and the production region,
@@ -75,7 +82,10 @@ def analyse(time, energy, eq_fraction, c=10.0):
     for f in cuts:
         s = energy[int(n * f):]
         scan.append((f, s.mean(), autocorr_error(s, c)[0]))
+    var_series = float(np.var(x, ddof=1)) if len(x) > 1 else float("nan")
+    dt = float((time[-1] - time[0]) / (n - 1)) if n > 1 else float("nan")       # imaginary time between two samples
     return dict(n=n, start=st, time=time, energy=energy, eq_fraction=eq_fraction, mean=float(x.mean()), error=err, tau=tau,
+                var_series=var_series, var_mean=float(err**2), corr_len=float(2.0 * tau), dt_sample=dt,
                 window_closed=closed, window=window, running_tau=running, rho=rho, n_eff=len(x) / (2.0 * tau),
                 time_eq_end=float(time[st]) if st < n else float(time[-1]), time_end=float(time[-1]),
                 mean_first_half=float(m1), mean_second_half=float(m2), drift_z=float(drift_z), scan=np.array(scan),
@@ -88,7 +98,8 @@ def summary_lines(r):
             f"Production region: samples {r['start']}-{r['n']}, time {r['time_eq_end']:.6g} - {r['time_end']:.6g}",
             f"Mean of the first / second half of the production region = {r['mean_first_half']:.6f} / {r['mean_second_half']:.6f}"
             f" (difference {r['mean_second_half'] - r['mean_first_half']:+.6f}, {r['drift_z']:+.2f} sigma)",
-            f"Effective number of independent samples = {r['n_eff']:.0f}"]
+            f"Effective number of independent samples = {r['n_eff']:.0f}",
+            f"Correlation length (2 tau_int) = {r['corr_len']:.1f} samples = {r['corr_len'] * r['dt_sample']:.6g} imaginary time"]
 
 
 def write_figure(r, filename="stat_analysis.png", title=""):
