@@ -499,22 +499,24 @@ def main():
         print()
 
     file_out = open(afqmc.output_file,"r")
-    data1=np.loadtxt(file_out)
-    data = data1[:,[1]]
-    data_e1 = data1[:,[5]]
-    data_hartree = data1[:,[6]]
-    data_exchange = data1[:,[7]]
-    st = int(len(data)*afqmc.EQUILIBRATION)
-    en = len(data)
-    a = new.blockAverage(data[st:en], afqmc.block_divisor)
-    e_gs_afqmc = np.mean(data[st:en])
-    var_of_mean = a[3]
-    std_err = np.sqrt(var_of_mean)
-    correlation_energy = e_gs_afqmc - E_HF
-    correlation_length = 0.5 * (var_of_mean / a[1][0] - 1)
-    e1_afqmc = float(np.mean(data_e1[st:en]))
-    hartree_afqmc = float(np.mean(data_hartree[st:en]))
-    exchange_afqmc = float(np.mean(data_exchange[st:en]))
+    # Only the root rank writes the output file, so only the root rank analyses it.
+    if afqmc.first_cpu:
+        data1=np.loadtxt(file_out)
+        data = data1[:,[1]]
+        data_e1 = data1[:,[5]]
+        data_hartree = data1[:,[6]]
+        data_exchange = data1[:,[7]]
+        st = int(len(data)*afqmc.EQUILIBRATION)
+        en = len(data)
+        e_gs_afqmc = np.mean(data[st:en])
+        # standard error of the mean from the integrated autocorrelation time
+        std_err, tau_int, tau_window_closed = new.autocorr_error(data[st:en, 0])
+        var_of_mean = std_err**2
+        correlation_energy = e_gs_afqmc - E_HF
+        correlation_length = tau_int - 0.5
+        e1_afqmc = float(np.mean(data_e1[st:en]))
+        hartree_afqmc = float(np.mean(data_hartree[st:en]))
+        exchange_afqmc = float(np.mean(data_exchange[st:en]))
     if afqmc.first_cpu:
         print()
         print('Calculating ground state energy...')
@@ -522,7 +524,10 @@ def main():
         print ('E_gs_afqmc = ', e_gs_afqmc, '+-', std_err)
         print ('Correlation Energy = ', correlation_energy)
         print ('Variance of the mean = ', var_of_mean)
+        print ('Integrated autocorrelation time (samples) = ', tau_int)
         print ('Correlation length = ', correlation_length)
+        if not tau_window_closed:
+            print('WARNING: the autocorrelation window did not close; the series is too short for a reliable error.')
         print('Total number of the rare event= ', rare_event_total_count)
         print('Numver of steps with rare events= ', rare_event_steps_count)
         print()
@@ -554,6 +559,7 @@ def main():
             outcar.write(f"E_gs_afqmc = {e_gs_afqmc}\n")
             outcar.write(f"+- {std_err}\n")
             outcar.write(f"Variance of the mean = {var_of_mean}\n")
+            outcar.write(f"Integrated autocorrelation time (samples) = {tau_int}\n")
             outcar.write(f"Correlation length = {correlation_length}\n")
             outcar.write(f"Correlation Energy = {correlation_energy}\n")
             outcar.write(f"Number of steps with rare events = {rare_event_steps_count}\n")

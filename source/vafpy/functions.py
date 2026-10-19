@@ -927,6 +927,43 @@ def blockAverage(datastream, block_divisor):
     return v, blockVar, blockMean, plateau_var
 
 
+def autocorr_error(datastream, c=10.0):
+    """Standard error of the mean of a correlated series.
+
+    Uses the integrated autocorrelation time tau_int = 1/2 + sum_{t=1}^{W} rho(t) with the
+    automatic window of Sokal (smallest W with W >= c * tau_int(W)); the error is
+    sqrt(2 * tau_int * var / N). Unlike the maximum of the blocking curve it does not pick
+    up the noisy large-block end of the curve, and unlike a fixed part of the curve it does
+    not depend on the block divisor.
+
+    Returns (error, tau_int, window_closed). tau_int is in samples of the series.
+    window_closed is False when the window does not close within a tenth of the series,
+    i.e. when the series is too short for its correlation time and the error is not reliable.
+    """
+    x = np.asarray(datastream, dtype=float).ravel()
+    n = len(x)
+    if n < 2:
+        return float("nan"), float("nan"), False
+    d = x - x.mean()
+    var = np.var(x, ddof=1)
+    if var == 0.0:
+        return 0.0, 0.5, True
+    f = np.fft.rfft(d, 2 * n)
+    rho = np.fft.irfft(f * np.conj(f))[:n]
+    rho = rho / rho[0]
+    tau = 0.5
+    closed = False
+    for k in range(1, n):
+        tau += rho[k]
+        if k >= c * tau:
+            # a window longer than a tenth of the series is not trustworthy: for a series
+            # much slower than its length the sum of rho(t) drifts to zero near the end
+            closed = k <= n // 10
+            break
+    tau = max(tau, 0.5)
+    return float(np.sqrt(2.0 * tau * var / n)), float(tau), closed
+
+
 
 
 if __name__ == "__main__":
