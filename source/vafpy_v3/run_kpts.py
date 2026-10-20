@@ -101,9 +101,12 @@ def main():
     wt_name = "WEIGHT.npy"
     file_exists = exists(wr_name)
     mode = "a" if file_exists else "w"
-    file_out = open(afqmc.output_file, mode)
-    weights_file = open("weights_history.txt", "w")
-    weights_file.write(f"{0}:   {np.mean(config.backend.to_numpy(walkers.weights))}\n")
+    # only the first rank writes the output files (the other ranks never touch them)
+    file_out = open(afqmc.output_file, mode) if afqmc.first_cpu else None
+    weights_file = open("weights_history.txt", "w") if afqmc.first_cpu else None
+    avg_w0 = np.mean(config.backend.to_numpy(walkers.weights))
+    if afqmc.first_cpu:
+        weights_file.write(f"{0}:   {avg_w0}\n")
 
     rare_event_total = 0
     rare_event_steps = 0
@@ -120,8 +123,8 @@ def main():
         if num_rare > 0:
             rare_event_steps += 1
 
-        avg_w = np.mean(config.backend.to_numpy(walkers.weights))
-        weights_file.write(f"{j}:   {avg_w}\n")
+        if j % afqmc.SAMP_FREQ == 0 and afqmc.first_cpu:       # one device-to-host copy per sample, not per step
+            weights_file.write(f"{j}:   {np.mean(config.backend.to_numpy(walkers.weights))}\n")
 
         if j % afqmc.CHECK_PERIODICITY == 0:
             np.save(wr_name, config.backend.to_numpy(walkers.slater_det))
@@ -131,8 +134,9 @@ def main():
             a = new.measure_energy(config, trial_det, walkers, hamiltonian)
             energy_new = a[0]
             if not np.isfinite(energy_new):
-                file_out.flush()
-                weights_file.flush()
+                if afqmc.first_cpu:
+                    file_out.flush()
+                    weights_file.flush()
                 raise FloatingPointError(
                     f"non-finite local energy at step {j} (tau*step = {j * afqmc.D_TAU})")
             b = a[1]
@@ -165,14 +169,18 @@ def main():
 
         j += 1
 
-    file_out.close()
-    weights_file.close()
-
     if afqmc.first_cpu:
+        file_out.close()
+        weights_file.close()
         print("Total rare events =", rare_event_total)
         print("Total runtime     =", -start_time + time())
         print("Output file       =", afqmc.output_file)
         print()
+
+    # the statistics are evaluated by the first rank from the closed file; the others wait for it
+    config.comm.Barrier()
+    if not afqmc.first_cpu:
+        return
 
     with open(afqmc.output_file, "r") as f:
         data = np.loadtxt(f)
