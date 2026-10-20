@@ -1,4 +1,4 @@
-"""AFQMC driver for vafpy_v3 (GPU/CPU + k-point support)."""
+"""AFQMC driver for vafpy_v4 (GPU/CPU, k-points, closed shell or spin-unrestricted)."""
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -20,13 +20,16 @@ def main():
 
     if afqmc.first_cpu:
         print("###########################")
-        print("    AFQMC (vafpy_v3)")
+        print("    AFQMC (vafpy_v4)")
         print("###########################")
         print()
         print("system               = ", afqmc.system)
         print("num_k                = ", afqmc.num_k)
         print("num_orb              = ", afqmc.num_orb)
+        print("spin                 = ", "unrestricted" if afqmc.SPIN else "closed shell")
         print("num_electrons_up     = ", afqmc.num_electrons_up)
+        if afqmc.SPIN:
+            print("num_electrons_down   = ", afqmc.num_electrons_down)
         print("num_g                = ", afqmc.num_g)
         print("D_TAU                = ", afqmc.D_TAU)
         print("NUM_WALKERS / rank   = ", afqmc.NUM_WALKERS)
@@ -63,6 +66,8 @@ def main():
         comm=afqmc.comm,
         precision=afqmc.Precsion,
         backend=backend,
+        spin_polarized=bool(afqmc.SPIN),
+        num_electron_dn=afqmc.num_electrons_down,
     )
 
     q_list = new.obtain_Q_list(config, afqmc.q_list_file)
@@ -70,10 +75,19 @@ def main():
     q_sizes = new.obtain_Q_sizes(config, afqmc.q_sizes_file) if layout == "compact" else None
     if afqmc.first_cpu:
         print("H2 layout            = ", layout, h2_host.shape)
+    h1_dn = h2_host_dn = None
+    if len(config.channels) == 2:
+        h2_host_dn, layout_dn = new.obtain_H2_host(config, afqmc.input_file_two_body_hamil_down)
+        if layout_dn != layout or h2_host_dn.shape != h2_host.shape:
+            raise ValueError(f"spin-down H2 {h2_host_dn.shape} ({layout_dn}) does not match spin up "
+                             f"{h2_host.shape} ({layout})")
+        h1_dn = new.obtain_H1(config, afqmc.input_file_one_body_hamil_down)
+        if afqmc.first_cpu:
+            print("H1/H2 spin down      = ", afqmc.input_file_one_body_hamil_down, afqmc.input_file_two_body_hamil_down)
     hamiltonian = new.build_hamiltonian(
         config, new.obtain_H1(config, afqmc.input_file_one_body_hamil),
-        h2_host, layout, q_list, q_sizes)
-    del h2_host
+        h2_host, layout, q_list, q_sizes, one_body_dn=h1_dn, h2_host_dn=h2_host_dn)
+    del h2_host, h2_host_dn
     trial_det, walkers = new.initialize_determinant(config)
     hamiltonian.setup_energy_expressions(config, trial_det)
 
@@ -128,6 +142,8 @@ def main():
 
         if j % afqmc.CHECK_PERIODICITY == 0:
             np.save(wr_name, config.backend.to_numpy(walkers.slater_det))
+            if walkers.slater_det_dn is not None:
+                np.save("WALKERS_down.npy", config.backend.to_numpy(walkers.slater_det_dn))
             np.save(wt_name, config.backend.to_numpy(walkers.weights))
 
         if j % afqmc.SAMP_FREQ == 0:
@@ -152,19 +168,23 @@ def main():
                     file_out.flush()
 
         if j % afqmc.REORTHO_PERIODICITY == 0:
-            walkers.slater_det = new.reortho_qr(config, walkers.slater_det, afqmc.REORTHO_METHOD)
+            new.reortho_walkers(config, walkers, afqmc.REORTHO_METHOD)
 
         if afqmc.REBAL_PERIODICITY != 0 and j % afqmc.REBAL_PERIODICITY == 0:
             if afqmc.REBAL_METHOD == "global":
-                mats_np = config.backend.to_numpy(walkers.slater_det)
+                # the spin channels travel together: their columns are joined for the exchange between ranks
+                dets_np = [config.backend.to_numpy(d) for d in walkers.dets]
+                split = np.cumsum([d.shape[-1] for d in dets_np])[:-1]
+                mats_np = dets_np[0] if len(dets_np) == 1 else np.concatenate(dets_np, axis=-1)
                 wts_np  = config.backend.to_numpy(walkers.weights)
                 mats_np, wts_np = new.rebalance_global(
                     config.comm, mats_np, wts_np, config)
-                walkers.slater_det = config.backend.array(mats_np, dtype=config.complex_type)
+                walkers.dets = [config.backend.array(m, dtype=config.complex_type)
+                                for m in np.split(mats_np, split, axis=-1)]
                 walkers.weights    = config.backend.array(wts_np,  dtype=config.complex_type)
             else:
                 idx = new.rebalance_comb(config, walkers.weights)
-                walkers.slater_det = walkers.slater_det[idx]
+                walkers.dets = [d[idx] for d in walkers.dets]
                 walkers.weights = new.init_walkers_weights(config, NUM_WALKERS)
 
         j += 1

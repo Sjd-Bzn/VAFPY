@@ -4,11 +4,11 @@
       NGVEC    : 1999           #### sum of Q_sizes.npy, printed by compress_H2_compact.py
       NEUP     : 4              #### electrons per k-point and spin
       EBANDS   : 0
-      NEDOWN   : 4
+      NEDOWN   : 4              #### spin-down electrons per k-point (SPIN = 1)
       NORB     : 8              #### orbitals per k-point
       EHZB     : 0
       ECONST   : 0
-      SPIN     : 0
+      SPIN     : 0              #### 0 closed shell, 1 spin-unrestricted (NEUP/NEDOWN per k-point, H1DOWN/H2DOWN)
       FSG      : 0.0            #### singularity exported by VASP (afqmc.yaml); 0 for the 2x2x2 diamond export
       KPOINT   : 8
 
@@ -30,6 +30,9 @@
       H2FILE   : H2_zip.npy     #### compact, from compress_H2_compact.py (a dense (nb*nk, nb*nk, ng) file is also accepted)
       QLIST    : Q_list.npy     #### rows [K1, K2, Q], one-based; must conserve momentum for compact H2
       QSIZES   : Q_sizes.npy    #### columns of every q sector (default: equal split)
+      # SPIN = 1: H1FILE/H2FILE are spin up, from compress_H2_compact.py --h2-down (joint SVD, common Q_sizes)
+      H1DOWN   : H1_svd_down.npy
+      H2DOWN   : H2_zip_down.npy
 
       METHOD IMPLEMENTATION:
       UPDTM    : H

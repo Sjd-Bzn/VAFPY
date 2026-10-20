@@ -282,6 +282,17 @@ class Configuration:
     comm: MPI.Comm
     precision: str
     backend: Backend
+    spin_polarized: bool = False      # False: closed shell, one determinant for both spins
+    num_electron_dn: int = None       # electrons per k-point with spin down (spin_polarized only; default num_electron)
+
+    @property
+    def channels(self):
+        """Spin channels as (electrons per k-point, multiplicity). Closed shell: one channel counted twice.
+        Spin-unrestricted: spin up and (if it has electrons) spin down, each counted once."""
+        if not self.spin_polarized:
+            return [(self.num_electron, 2)]
+        ne_dn = self.num_electron if self.num_electron_dn is None else self.num_electron_dn
+        return [(self.num_electron, 1)] + ([(ne_dn, 1)] if ne_dn > 0 else [])
 
     @property
     def float_type(self):
@@ -302,8 +313,29 @@ class Configuration:
 
 @dataclass
 class Walkers:
-    slater_det: object
+    slater_det: object                # closed shell: the determinant of both spins; spin-unrestricted: spin up
     weights: object
+    slater_det_dn: object = None      # spin-unrestricted only: spin down
+
+    @property
+    def dets(self):
+        """Determinants of the spin channels, in the order of Configuration.channels."""
+        return [self.slater_det] if self.slater_det_dn is None else [self.slater_det, self.slater_det_dn]
+
+    @dets.setter
+    def dets(self, dets):
+        self.slater_det = dets[0]
+        self.slater_det_dn = dets[1] if len(dets) > 1 else None
+
+
+def as_list(x):
+    """A per-channel quantity as a list (a single array is the closed-shell case)."""
+    return list(x) if isinstance(x, (list, tuple)) else [x]
+
+
+def unlist(xs):
+    """Inverse of as_list: one channel is passed on as the bare array."""
+    return xs[0] if len(xs) == 1 else list(xs)
 
 
 @dataclass
@@ -535,6 +567,13 @@ def make_compact_kernels(be, nk, nb, ne, nmax, ng, kmap, sizes, has_mf, jit=Fals
     return fns
 
 
+class _Channel:
+    """Spin-channel part of the compact Hamiltonian (closed shell: the one channel stands for both spins)."""
+
+    def __init__(self, ne, mult):
+        self.ne, self.mult = ne, mult
+
+
 @dataclass
 class HamiltonianCompact:
     """Same interface as Hamiltonian, but H2 is kept in the compact layout
@@ -543,7 +582,13 @@ class HamiltonianCompact:
     K1 = kmap[q, K2], which is used to gather the trial-dependent quantities.
 
     The trial must be the block-diagonal HF determinant (first ne orbitals of
-    every k-point).
+    every k-point) of every spin channel.
+
+    Spin: closed shell (config.channels = [(ne, 2)]) uses one_body/two_body for both spins. Spin-unrestricted
+    (config.spin_polarized) uses one_body/two_body for spin up and one_body_dn/two_body_dn for spin down. The two
+    spins share the columns g (the same auxiliary field couples to rho_up + rho_dn), so the two compact tensors
+    must come from one joint compression with common Q sectors. Per-channel quantities (theta, the field, exp_h1)
+    are lists in the order of config.channels; a single channel is passed as the bare array.
     """
     one_body: object        # (nb*nk, nb*nk)
     two_body: object        # (nb*nk, nb, ng_total), raw (unscaled) L
@@ -553,137 +598,180 @@ class HamiltonianCompact:
     q_list: object = None   # unused, kept for interface symmetry
     test_random_field: object = None
     exchange_mode: str = "gram"     # 'gram' (per-sector Gram of the occupied blocks) or 'direct' (sum over g, reference)
+    one_body_dn: object = None      # spin-unrestricted only
+    two_body_dn: object = None
 
     # ------------------------------------------------------------------
     def setup_energy_expressions(self, config, trial_det):
         be = config.backend
         self._be = be
         wt = np.dtype(config.complex_type)      # host arrays of the setup are in the working precision
-        nk, nb, ne = config.num_kpoint, config.num_orbital, config.num_electron
-        nbk, nek = nb * nk, ne * nk
+        nk, nb = config.num_kpoint, config.num_orbital
+        nbk = nb * nk
         kmap = np.asarray(self.kmap, dtype=np.int64)
         sizes = np.asarray(self.sizes, dtype=np.int64)
         off = sector_offsets(sizes)
         ng = int(sizes.sum())
         if ng != config.num_g:
             raise ValueError(f"sector sizes sum to {ng}, NGVEC={config.num_g}")
-        Lc = np.asarray(be.to_numpy(self.two_body), dtype=wt)
-        if Lc.shape != (nbk, nb, ng):
-            raise ValueError(f"compact H2 has shape {Lc.shape}, expected {(nbk, nb, ng)}")
-        h1_host = be.to_numpy(self.one_body).astype(wt)
-        trial_host = be.to_numpy(trial_det)
-        if not np.allclose(trial_host, block_diag(*([np.eye(nb, ne)] * nk))):
-            raise NotImplementedError("compact H2 requires the block-diagonal HF trial")
-        shape_theta = (config.num_walkers, nbk, nek)
+        trials = as_list(trial_det)
+        chans = [_Channel(ne, m) for ne, m in config.channels]
+        if len(trials) != len(chans):
+            raise ValueError(f"{len(trials)} trial determinants for {len(chans)} spin channels")
+        raw = [(self.one_body, self.two_body), (self.one_body_dn, self.two_body_dn)][:len(chans)]
+        if len(chans) == 2 and (self.one_body_dn is None or self.two_body_dn is None):
+            raise ValueError("spin-unrestricted run without a spin-down Hamiltonian")
 
-        # ---- one-body energy (as in the dense class) -------------------
-        h1_trial = contract("pi, pq -> iq", trial_det, self.one_body)
-        self._one_body_expression = contract_expression(
-            "ip, wpi -> w", h1_trial, shape_theta, constants=[0], optimize="greedy")
-
-        # ---- exchange: Gram over g of the occupied blocks, one matrix per sector q ------------------------------
-        # G[q, K2, Kb, (b2,ob), (oa,bp)] = sum_{g in q} Lc[(K2,b2),oa,g] conj(Lc[(Kb,ob),bp,g]); the row k-points of
-        # both factors (kmap[q,K2], kmap[q,Kb]) are implicit, so no zero blocks are stored.
-        occ_rows = np.array([K * nb + o for K in range(nk) for o in range(ne)])
-        G = np.zeros((nk, nk, nk, nb * ne, ne * nb), dtype=wt)
-        for q in range(nk):
-            cols = slice(off[q], off[q + 1])
-            A = Lc[:, :ne, cols].reshape(nbk * ne, -1)                 # (K2,b2,oa)
-            B = Lc[occ_rows][:, :, cols].reshape(nek * nb, -1)         # (Kb,ob,bp)
-            Gq = (A @ B.conj().T).reshape(nk, nb, ne, nk, ne, nb)      # K2,b2,oa,Kb,ob,bp
-            G[q] = Gq.transpose(0, 3, 1, 4, 2, 5).reshape(nk, nk, nb * ne, ne * nb)
-        self._G = be.array(G, dtype=config.complex_type)
-        del G
-        self._singularity_correction = config.singularity * config.num_kpoint
-        self._kq = [np.asarray(kmap[q]) for q in range(nk)]
-        self._kinv = [np.argsort(kmap[q]) for q in range(nk)]            # K2 with kmap[q,K2] = K1
-
-        # ---- mean field ------------------------------------------------
         fixed = kmap == np.arange(nk)[None, :]            # fixed[q, K]: block (K, K) lives in sector q
         mf_sectors = [q for q in range(nk) if fixed[q].any()]
         for q in mf_sectors:
             if not fixed[q].all():
                 raise NotImplementedError(
                     "sector with only some diagonal blocks: not a regular k-mesh")
-        L0 = np.zeros(ng, dtype=wt)
-        for q in mf_sectors:
-            cols = slice(off[q], off[q + 1])
-            for K in range(nk):
-                L0[cols] += np.einsum("iig->g", Lc[K * nb:K * nb + ne, :ne, cols])
-        self.H_zero = 2 * np.einsum("g,g->", L0, L0.conj()) / (2 * ne * nk**2)
-
-        change = np.zeros((nbk, nbk), dtype=wt)
-        for q in mf_sectors:
-            cols = slice(off[q], off[q + 1])
-            avg = 2 * L0[cols]
-            for K in range(nk):
-                blk = Lc[K * nb:(K + 1) * nb, :, cols]                # blk[p, r, g] = L[(K,r),(K,p),g]
-                change[K * nb:(K + 1) * nb, K * nb:(K + 1) * nb] += \
-                    np.einsum("prg,g->rp", blk, avg.conj()) + np.einsum("rpg,g->rp", blk.conj(), avg)
-        h_sic = np.zeros((nbk, nbk), dtype=wt)
-        for q in range(nk):
-            cols = slice(off[q], off[q + 1])
-            for K2 in range(nk):
-                K = kmap[q, K2]
-                A = Lc[K2 * nb:(K2 + 1) * nb, :, cols]                 # (b2, b1, g)
-                h_sic[K * nb:(K + 1) * nb, K * nb:(K + 1) * nb] += np.einsum("cbg,cdg->bd", A, A.conj())
-        h_sic *= -1.0 / (2 * nk)
-        h1_total = h1_host + change / (2 * nk) + h_sic
-        self._L0, self._change, self._h_sic = L0, change, h_sic     # small (ng, nbk^2) pieces, kept for diagnostics
-
-        h1_total_be = be.array(h1_total, dtype=config.complex_type)
-        self._h1 = -h1_total_be * config.timestep
-        self._exp_h1 = be.expm(-h1_total_be * config.timestep)
-        self._exp_h1_half = be.expm(-0.5 * h1_total_be * config.timestep)
-        self._sqrt_tau = be.sqrt(be.array(config.timestep)).astype(config.float_type)
-
-        # ---- sector bookkeeping (columns are padded to the largest sector) ----
         nmax = int(sizes.max())
-        self._nk, self._nb, self._ne, self._ng, self._nmax = nk, nb, ne, ng, nmax
 
+        for ch, trial, (h1_raw, h2_raw) in zip(chans, trials, raw):
+            ne = ch.ne
+            nek = ne * nk
+            Lc = np.asarray(be.to_numpy(h2_raw), dtype=wt)
+            if Lc.shape != (nbk, nb, ng):
+                raise ValueError(f"compact H2 has shape {Lc.shape}, expected {(nbk, nb, ng)}")
+            ch.h1_host = be.to_numpy(h1_raw).astype(wt)
+            trial_host = be.to_numpy(trial)
+            if not np.allclose(trial_host, block_diag(*([np.eye(nb, ne)] * nk))):
+                raise NotImplementedError("compact H2 requires the block-diagonal HF trial")
+            shape_theta = (config.num_walkers, nbk, nek)
 
-        # ---- single padded compact tensor for batched matrix products -------------------------------------
-        # M[q, g, (K2,b2,b1)] = Lc[(K2,b2), b1, off_q + g]: rows are the columns g of sector q.
-        M = np.zeros((nk, nmax, nk * nb * nb), dtype=wt)
-        for q in range(nk):
-            n = sizes[q]
-            M[q, :n, :] = Lc[:, :, off[q]:off[q + 1]].reshape(nk * nb * nb, n).T
-        self._M = be.array(M, dtype=config.complex_type)
-        del M
-        # mean-field shift: L_mf = L - c_g on the diagonal blocks of the sector(s) with fixed points
+            # ---- one-body energy (as in the dense class) -------------------
+            h1_trial = contract("pi, pq -> iq", trial, h1_raw)
+            ch.one_body_expression = contract_expression(
+                "ip, wpi -> w", h1_trial, shape_theta, constants=[0], optimize="greedy")
+
+            # ---- exchange: Gram over g of the occupied blocks, one matrix per sector q --------------------------
+            # G[q, K2, Kb, (b2,ob), (oa,bp)] = sum_{g in q} Lc[(K2,b2),oa,g] conj(Lc[(Kb,ob),bp,g]); the row k-points
+            # of both factors (kmap[q,K2], kmap[q,Kb]) are implicit, so no zero blocks are stored.
+            occ_rows = np.array([K * nb + o for K in range(nk) for o in range(ne)])
+            G = np.zeros((nk, nk, nk, nb * ne, ne * nb), dtype=wt)
+            for q in range(nk):
+                cols = slice(off[q], off[q + 1])
+                A = Lc[:, :ne, cols].reshape(nbk * ne, -1)                 # (K2,b2,oa)
+                B = Lc[occ_rows][:, :, cols].reshape(nek * nb, -1)         # (Kb,ob,bp)
+                Gq = (A @ B.conj().T).reshape(nk, nb, ne, nk, ne, nb)      # K2,b2,oa,Kb,ob,bp
+                G[q] = Gq.transpose(0, 3, 1, 4, 2, 5).reshape(nk, nk, nb * ne, ne * nb)
+            ch.G = be.array(G, dtype=config.complex_type)
+            del G
+
+            # ---- occupied diagonal of the mean-field sector(s) and self-interaction of this spin ------------
+            L0 = np.zeros(ng, dtype=wt)
+            for q in mf_sectors:
+                cols = slice(off[q], off[q + 1])
+                for K in range(nk):
+                    L0[cols] += np.einsum("iig->g", Lc[K * nb:K * nb + ne, :ne, cols])
+            ch.L0 = L0
+            h_sic = np.zeros((nbk, nbk), dtype=wt)
+            for q in range(nk):
+                cols = slice(off[q], off[q + 1])
+                for K2 in range(nk):
+                    K = kmap[q, K2]
+                    A = Lc[K2 * nb:(K2 + 1) * nb, :, cols]                 # (b2, b1, g)
+                    h_sic[K * nb:(K + 1) * nb, K * nb:(K + 1) * nb] += np.einsum("cbg,cdg->bd", A, A.conj())
+            ch.h_sic = h_sic * (-1.0 / (2 * nk))
+
+            # ---- single padded compact tensor for batched matrix products -------------------------------------
+            # M[q, g, (K2,b2,b1)] = Lc[(K2,b2), b1, off_q + g]: rows are the columns g of sector q.
+            M = np.zeros((nk, nmax, nk * nb * nb), dtype=wt)
+            for q in range(nk):
+                n = sizes[q]
+                M[q, :n, :] = Lc[:, :, off[q]:off[q + 1]].reshape(nk * nb * nb, n).T
+            ch.Lc = Lc
+            ch.M = be.array(M, dtype=config.complex_type)
+            del M
+
+        # ---- mean field, shared by the spins ---------------------------------------------------------------
+        # <rho_g> of the trial: avg = sum over channels of mult * L0 (closed shell: 2 L0); N electrons in total.
+        avg = sum(ch.mult * ch.L0 for ch in chans)
+        n_tot = sum(ch.mult * ch.ne for ch in chans) * nk
+        self.H_zero = np.einsum("g,g->", avg, avg.conj()) / (2 * nk * n_tot)
+        # L_mf = L - c_g on the diagonal blocks of the sector(s) with fixed points, c = <rho_g> / N: the same shift
+        # for both spins, because the number operator N = N_up + N_dn is what is subtracted.
         c = np.zeros(ng, dtype=wt)
         for q in mf_sectors:
-            c[off[q]:off[q + 1]] = L0[off[q]:off[q + 1]] / (ne * nk)
+            c[off[q]:off[q + 1]] = avg[off[q]:off[q + 1]] / n_tot
         self._c = be.array(c[:, None], dtype=config.complex_type)
         self._c_conj = be.array(c.conj()[:, None], dtype=config.complex_type)
         self._has_mf = bool(np.any(c != 0))
+        self._sqrt_tau = be.sqrt(be.array(config.timestep)).astype(config.float_type)
+        for ch in chans:
+            change = np.zeros((nbk, nbk), dtype=wt)
+            for q in mf_sectors:
+                cols = slice(off[q], off[q + 1])
+                for K in range(nk):
+                    blk = ch.Lc[K * nb:(K + 1) * nb, :, cols]              # blk[p, r, g] = L[(K,r),(K,p),g]
+                    change[K * nb:(K + 1) * nb, K * nb:(K + 1) * nb] += \
+                        np.einsum("prg,g->rp", blk, avg[cols].conj()) + np.einsum("rpg,g->rp", blk.conj(), avg[cols])
+            h1_total = ch.h1_host + change / (2 * nk) + ch.h_sic
+            ch.change = change
+            h1_total_be = be.array(h1_total, dtype=config.complex_type)
+            ch.h1 = -h1_total_be * config.timestep
+            ch.exp_h1 = be.expm(-h1_total_be * config.timestep)
+            ch.exp_h1_half = be.expm(-0.5 * h1_total_be * config.timestep)
+            ch.k = make_compact_kernels(be, nk, nb, ch.ne, nmax, ng, kmap, sizes, self._has_mf,
+                                        jit=hasattr(be, "_jax"))
+            del ch.Lc, ch.h1_host
+
+        self._chans = chans
+        self._singularity_correction = config.singularity * config.num_kpoint
+        self._kq = [np.asarray(kmap[q]) for q in range(nk)]
+        self._kinv = [np.argsort(kmap[q]) for q in range(nk)]            # K2 with kmap[q,K2] = K1
+        self._nk, self._nb, self._ng, self._nmax = nk, nb, ng, nmax
+        self._ne = chans[0].ne
         self._eye = be.eye(nbk, dtype=config.complex_type)
         self._inv_sqrt_nk = float(1.0 / np.sqrt(nk))      # python float: keeps complex64 as complex64
-        self.two_body = None          # the raw tensor is not needed any more: only M, G and small constants stay
-        self._k = make_compact_kernels(be, nk, nb, ne, nmax, ng, kmap, sizes, self._has_mf,
-                                       jit=hasattr(be, "_jax"))
+        # small pieces kept for diagnostics (first channel; closed shell: the only one)
+        self._L0, self._change, self._h_sic = chans[0].L0, chans[0].change, chans[0].h_sic
+        self._M, self._G, self._k = chans[0].M, chans[0].G, chans[0].k
+        self._h1, self._exp_h1, self._exp_h1_half = chans[0].h1, chans[0].exp_h1, chans[0].exp_h1_half
+        # the raw tensors are not needed any more: only M, G and small constants stay
+        self.two_body = None
+        self.two_body_dn = None
 
     # ------------------------------------------------------------------
+    def _pairs(self, theta):
+        th = as_list(theta)
+        if len(th) != len(self._chans):
+            raise ValueError(f"{len(th)} theta for {len(self._chans)} spin channels")
+        return zip(self._chans, th)
+
     def compute_one_body(self, theta):
-        return 2 * self._one_body_expression(theta)
+        return sum(ch.mult * ch.one_body_expression(th) for ch, th in self._pairs(theta))
 
     def compute_hartree(self, theta):
-        """E_H = 2 sum_g P_g Q_g, with the same two contractions as the force bias (raw L, no extra tensor)."""
-        P, Q = self._pq(theta)
-        return 2 * (P * Q).sum(axis=0)
+        """E_H = 1/2 sum_g rho_g rho_g^+ with rho = sum over the spins of P (and Q for rho^+); closed shell 2 sum P Q.
+        Same two contractions as the force bias (raw L, no extra tensor)."""
+        P, Q = 0, 0
+        for ch, th in self._pairs(theta):
+            p, q = ch.k["pq"](ch.M, th)
+            P, Q = P + ch.mult * p, Q + ch.mult * q
+        return 0.5 * (P * Q).sum(axis=0)
 
     def compute_exchange(self, theta):
-        e = self._exchange_direct(theta) if self.exchange_mode == "direct" else self._exchange_gram(theta)
+        """Exchange acts within each spin: E_x = -1/2 sum_sigma X_sigma (closed shell -X)."""
+        e = 0
+        for ch, th in self._pairs(theta):
+            x = self._exchange_direct(ch, th) if self.exchange_mode == "direct" else ch.k["exchange"](ch.G, th)
+            e = e + (0.5 * ch.mult) * x
         return -e + self._singularity_correction
 
     def _exchange_gram(self, theta):
-        return self._k["exchange"](self._G, theta)
+        return sum((0.5 * ch.mult) * ch.k["exchange"](ch.G, th) for ch, th in self._pairs(theta))
 
-    def _exchange_direct(self, theta, max_elements=2 * 10**8):
-        """Reference form: sum over every column g, E = sum_g sum_{ij} Y_g[j,i] Z_g[i,j] (no Gram precontraction).
+    def _exchange_direct(self, ch, theta, max_elements=2 * 10**8):
+        """Reference form for one spin channel: sum over every column g, E = sum_g sum_{ij} Y_g[j,i] Z_g[i,j]
+        (no Gram precontraction).
         Y_g[(Kj,oj),(Ki,oi)] = sum_b2 L[(Kj,oj),(K2,b2),g] theta[(K2,b2),(Ki,oi)], K2 = kmap^-1[q,Kj],
         Z_g[(Ki,oi),(Kj,oj)] = sum_bp conj(L[(Ki,bp'),(Ki,oi),g]) theta[(kmap[q,Ki],bp),(Kj,oj)]. Walkers are chunked."""
-        nk, nb, ne, nmax = self._nk, self._nb, self._ne, self._nmax
+        nk, nb, nmax = self._nk, self._nb, self._nmax
+        ne = ch.ne
         be = self._be
         w = theta.shape[0]
         tv = theta.reshape(w, nk, nb, nk, ne)
@@ -693,7 +781,7 @@ class HamiltonianCompact:
             tvc = tv[w0:w0 + chunk]
             total = 0
             for q in range(nk):
-                A = self._M[q].reshape(nmax, nk, nb, nb)                               # g, K2, b2, b1
+                A = ch.M[q].reshape(nmax, nk, nb, nb)                                  # g, K2, b2, b1
                 kq, ki = self._kq[q], self._kinv[q]
                 Y = contract("gkbo, wkbiu -> wgkoiu", A[:, ki, :, :ne], tvc[:, ki])    # w,g,Kj,oj,Ki,oi
                 Z = contract("gkib, wkbju -> wgkiju", A[:, :, :ne, :].conj(), tvc[:, kq])  # w,g,Ki,oi,Kj,oj
@@ -709,36 +797,49 @@ class HamiltonianCompact:
 
     # ------------------------------------------------------------------
     def _pq(self, theta):
-        return self._k["pq"](self._M, theta)
+        """P, Q of the total density (sum over the spins); closed shell: those of one spin."""
+        P, Q = 0, 0
+        for ch, th in self._pairs(theta):
+            p, q = ch.k["pq"](ch.M, th)
+            P, Q = P + (0.5 * ch.mult) * p, Q + (0.5 * ch.mult) * q
+        return P, Q
 
     def _force_bias(self, theta):
-        """(2*ng, nw): [ (P+Q)/2 ; i(P-Q)/2 ] / sqrt(nk) for the mean-field subtracted L."""
-        return self._k["force_bias"](self._M, self._c, self._c_conj, theta)
+        """(2*ng, nw): [ (P+Q)/2 ; i(P-Q)/2 ] / sqrt(nk) for the mean-field subtracted L, summed over the spins
+        with weight mult/2 (closed shell: the value of one spin, the factor 2 of the two spins is in the -2j of
+        create_auxiliary_field)."""
+        fb = 0
+        for ch, th in self._pairs(theta):
+            fb = fb + (0.5 * ch.mult) * ch.k["force_bias"](ch.M, self._c, self._c_conj, th)
+        return fb
 
     def _auxiliary_field(self, x):
-        """sum_g A_e x_e + A_o x_o as one dense (nb*nk, nb*nk, nw) matrix, A_e = (L+L^+)/2, A_o = i(L-L^+)/2,
-        built block by block: sector q and column k-point K2 fill the block (kmap[q,K2], K2); no dense L_g is formed."""
-        return self._k["aux"](self._M, self._c, self._c_conj, self._eye, x)
+        """sum_g A_e x_e + A_o x_o as one dense (nb*nk, nb*nk, nw) matrix per spin channel, A_e = (L+L^+)/2,
+        A_o = i(L-L^+)/2, built block by block: sector q and column k-point K2 fill the block (kmap[q,K2], K2); no
+        dense L_g is formed. The same field x acts on both spins."""
+        return unlist([ch.k["aux"](ch.M, self._c, self._c_conj, self._eye, x) for ch in self._chans])
 
     def create_auxiliary_field(self, config, theta):
         random_field = self.create_random_field(config)
         force_bias = -2j * self._sqrt_tau * self._force_bias(theta)
         force_bias = config.backend.where(abs(force_bias) > 1, 0.0, force_bias)
         arg = contract("gw, gw -> w", random_field - 0.5 * force_bias, force_bias)
-        field = 1j * self._sqrt_tau * self._auxiliary_field(random_field - force_bias)
+        x = random_field - force_bias
+        field = unlist([1j * self._sqrt_tau * ch.k["aux"](ch.M, self._c, self._c_conj, self._eye, x)
+                        for ch in self._chans])
         return field, config.backend.exp(arg)
 
     @property
     def h1(self):
-        return self._h1
+        return unlist([ch.h1 for ch in self._chans])
 
     @property
     def exp_h1(self):
-        return self._exp_h1
+        return unlist([ch.exp_h1 for ch in self._chans])
 
     @property
     def exp_h1_half(self):
-        return self._exp_h1_half
+        return unlist([ch.exp_h1_half for ch in self._chans])
 
 
 # =========================================================================
@@ -889,18 +990,27 @@ def obtain_H2_host(config, filename="H2_zip.npy"):
     return h2, layout
 
 
-def build_hamiltonian(config, one_body, h2_host, layout, q_list, q_sizes=None):
+def build_hamiltonian(config, one_body, h2_host, layout, q_list, q_sizes=None, one_body_dn=None, h2_host_dn=None):
     """Hamiltonian for a dense or compact H2 (layout from obtain_H2_host).
 
     dense   -> Hamiltonian (reference path, dense (nb*nk, nb*nk, ng) tensor)
     compact -> HamiltonianCompact (momentum-conserving blocks only)
+
+    Spin-unrestricted runs (config.spin_polarized) always use HamiltonianCompact; a dense H2 (e.g. a Gamma-point
+    supercell, nk = 1) is converted to the compact layout. one_body_dn / h2_host_dn are the spin-down terms in the
+    same layout as the spin-up ones.
     """
-    if layout == "compact":
+    if config.spin_polarized or layout == "compact":
         kmap = build_kmap(q_list, config.num_kpoint)
         if q_sizes is None:
             q_sizes = sector_sizes_default(config.num_g, config.num_kpoint)
+        if layout != "compact":
+            h2_host = dense_to_compact(h2_host, kmap, q_sizes, config.num_orbital)
+            if h2_host_dn is not None:
+                h2_host_dn = dense_to_compact(h2_host_dn, kmap, q_sizes, config.num_orbital)
         # the compact tensor stays on the host, in the working precision, until setup has built the device tensors
-        return HamiltonianCompact(one_body=one_body, two_body=h2_host, kmap=kmap, sizes=q_sizes, q_list=q_list)
+        return HamiltonianCompact(one_body=one_body, two_body=h2_host, kmap=kmap, sizes=q_sizes, q_list=q_list,
+                                  one_body_dn=one_body_dn, two_body_dn=h2_host_dn)
     return Hamiltonian(
         one_body=one_body,
         two_body=config.backend.array(h2_host, dtype=config.complex_type),
@@ -908,19 +1018,24 @@ def build_hamiltonian(config, one_body, h2_host, layout, q_list, q_sizes=None):
 
 
 def initialize_determinant(config):
-    """Block-diagonal multi-k trial determinant and initial walker copies."""
-    single = config.backend.eye(
-        config.num_orbital, config.num_electron, dtype=config.float_type
-    )
-    trial_det = config.backend.block_diag(*([single] * config.num_kpoint))
-    slater_det = config.backend.array(
-        config.num_walkers * [config.backend.to_numpy(trial_det)]
-    ).astype(config.complex_type)
+    """Block-diagonal multi-k trial determinant and initial walker copies.
+
+    Closed shell: returns (trial, walkers). Spin-unrestricted: the trial is a list with one determinant per spin
+    channel (first ne_sigma orbitals of every k-point) and the walkers carry slater_det (up) and slater_det_dn."""
+    trials, dets = [], []
+    for ne, _ in config.channels:
+        single = config.backend.eye(config.num_orbital, ne, dtype=config.float_type)
+        trial_det = config.backend.block_diag(*([single] * config.num_kpoint))
+        trials.append(trial_det)
+        dets.append(config.backend.array(
+            config.num_walkers * [config.backend.to_numpy(trial_det)]
+        ).astype(config.complex_type))
     walkers = Walkers(
-        slater_det=slater_det,
+        slater_det=dets[0],
         weights=config.backend.ones(config.num_walkers, dtype=config.complex_type),
     )
-    return trial_det, walkers
+    walkers.dets = dets
+    return unlist(trials), walkers
 
 
 # =========================================================================
@@ -935,8 +1050,29 @@ def project_trial(backend, trial, slater_det):
     return backend.linalg.det(trial.T @ slater_det) ** 2
 
 
+def walker_thetas(config, trial, walkers):
+    """theta of every spin channel (a bare array for a closed shell)."""
+    return unlist([biorthogonalize(config.backend, t, d) for t, d in zip(as_list(trial), walkers.dets)])
+
+
+def overlap_trial(config, trial, dets):
+    """<Psi_T|Phi> = prod over the spins of det(T^T Phi); closed shell det(T^T Phi)^2."""
+    trials = as_list(trial)
+    if len(trials) == 1 and config.channels[0][1] == 2:
+        return project_trial(config.backend, trials[0], dets[0])
+    ov = 1
+    for t, d in zip(trials, dets):
+        ov = ov * config.backend.linalg.det(t.T @ d)
+    return ov
+
+
+def reortho_walkers(config, walkers, method="Auto"):
+    """Re-orthogonalise the determinant of every spin channel separately."""
+    walkers.dets = [reortho_qr(config, d, method) for d in walkers.dets]
+
+
 def measure_energy(config, trial, walkers, hamiltonian):
-    th = biorthogonalize(config.backend, trial, walkers.slater_det)
+    th = walker_thetas(config, trial, walkers)
     e1 = hamiltonian.compute_one_body(th)
     eh = hamiltonian.compute_hartree(th)
     ex = hamiltonian.compute_exchange(th)
@@ -954,7 +1090,7 @@ def measure_energy(config, trial, walkers, hamiltonian):
 
 def measure_hartree(config, trial, walkers, hamiltonian):
     """Hartree energy averaged over walkers; used to compute h_0 for S2 propagator."""
-    th = biorthogonalize(config.backend, trial, walkers.slater_det)
+    th = walker_thetas(config, trial, walkers)
     energy_hartree = hamiltonian.compute_hartree(th)
     energy = energy_hartree / config.num_kpoint
     weighted_energy = energy @ walkers.weights
@@ -966,7 +1102,7 @@ def measure_hartree(config, trial, walkers, hamiltonian):
 
 def measure_components(config, trial, walkers, hamiltonian):
     """Returns (E_one, Hartree, Exchange) — useful for verification."""
-    th = biorthogonalize(config.backend, trial, walkers.slater_det)
+    th = walker_thetas(config, trial, walkers)
     e1 = hamiltonian.compute_one_body(th)
     eh = hamiltonian.compute_hartree(th)
     ex = hamiltonian.compute_exchange(th)
@@ -991,35 +1127,43 @@ def apply_taylor(config, matrix, slater_det):
 def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0):
     """One imaginary-time step of all walkers.
 
-    h_0 = exp(dtau * H_zero) — scalar applied to the new walker determinant.
+    h_0 = exp(dtau * H_zero) — scalar applied to the new walker determinant (of every spin channel).
     e_0 is the running energy estimate used in the importance reweighting.
+    Spin-unrestricted: the one auxiliary field acts on the determinant of each spin with that spin's L and h1,
+    and the weight uses the product of the overlaps of the two spins.
     """
-    new_walkers = Walkers(
-        config.backend.zeros_like(walkers.slater_det),
-        config.backend.zeros_like(walkers.weights),
-    )
-    th = biorthogonalize(config.backend, trial, walkers.slater_det)
+    dets = walkers.dets
+    th = walker_thetas(config, trial, walkers)
     h2, importance = hamiltonian.create_auxiliary_field(config, th)
     num_rare_event = 0
-
+    fields = as_list(h2)
     if config.propagator == "Taylor":
-        h = hamiltonian.h1 + h2
-        full = apply_taylor(config, h, walkers.slater_det)
-        new_walkers.slater_det = h_0 * full
+        h1s = as_list(hamiltonian.h1)
     elif config.propagator == "S1":
-        full_h2 = apply_taylor(config, h2, walkers.slater_det)
-        full_h1 = hamiltonian.exp_h1 @ full_h2
-        new_walkers.slater_det = h_0 * full_h1
+        e1s = as_list(hamiltonian.exp_h1)
     elif config.propagator == "S2":
-        half = hamiltonian.exp_h1_half @ walkers.slater_det
-        full_h2 = apply_taylor(config, h2, half)
-        half = hamiltonian.exp_h1_half @ full_h2
-        new_walkers.slater_det = h_0 * half
+        e1s = as_list(hamiltonian.exp_h1_half)
     else:
         raise ValueError(f"Unknown propagator '{config.propagator}'")
 
-    new_overlap = project_trial(config.backend, trial, new_walkers.slater_det)
-    old_overlap = project_trial(config.backend, trial, walkers.slater_det)
+    new_dets = []
+    for s, (det, field) in enumerate(zip(dets, fields)):
+        if config.propagator == "Taylor":
+            full = apply_taylor(config, h1s[s] + field, det)
+            new_dets.append(h_0 * full)
+        elif config.propagator == "S1":
+            full_h2 = apply_taylor(config, field, det)
+            new_dets.append(h_0 * (e1s[s] @ full_h2))
+        else:
+            half = e1s[s] @ det
+            full_h2 = apply_taylor(config, field, half)
+            half = e1s[s] @ full_h2
+            new_dets.append(h_0 * half)
+
+    new_walkers = Walkers(new_dets[0], config.backend.zeros_like(walkers.weights))
+    new_walkers.dets = new_dets
+    new_overlap = overlap_trial(config, trial, new_dets)
+    old_overlap = overlap_trial(config, trial, dets)
     overlap_ratio = new_overlap / old_overlap
     cos_alpha = config.backend.cos(config.backend.angle(overlap_ratio))
     factor = abs(overlap_ratio * importance * config.backend.exp(config.timestep * e_0))
