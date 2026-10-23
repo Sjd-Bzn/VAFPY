@@ -57,6 +57,7 @@ def read(path="vafpy.in"):
     afqmc.rank = afqmc.comm.Get_rank()
     afqmc.first_cpu = afqmc.rank == 0
     afqmc.seed = inputs.get("SEED", None)
+    afqmc.timing = int(inputs.get("TIMING", 1))   # timing report timing.txt: 0 off, 1 parts, 2 parts and stages (timing.py)
 
     # Input data files (kpoint-aware naming)
     afqmc.input_file_one_body_hamil = inputs.get("H1FILE", "H1_svd.npy")

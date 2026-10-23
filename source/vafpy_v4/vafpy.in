@@ -23,7 +23,8 @@
       OTEY     : 6
       TIMG     : 10
       TREL     : 10
-      SEED     : 12345
+      SEED     : 12345        #### integer, or random (also if missing): drawn once, printed in the output and outcar.txt
+      TIMING   : 1            #### timing report timing.txt: 0 off, 1 parts of the run, 2 also the stages (profiling)
 
       DATA FILES (compact H2: (nb*nk, nb, ng_total)):
       H1FILE   : H1_svd.npy
