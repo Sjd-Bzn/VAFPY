@@ -13,10 +13,12 @@ from os.path import exists
 import input_reader
 import functions as new
 import stat_analysis
+import timing
 
 
 def main():
     afqmc = input_reader.read()
+    timers = timing.Timers(level=afqmc.timing, sync=timing.jax_sync if afqmc.Backend.lower() == "jax" else None)
 
     if afqmc.first_cpu:
         print("###########################")
@@ -39,16 +41,17 @@ def main():
         print("output_file          = ", afqmc.output_file)
         print()
 
-    # Pick seed: input file > random
+    # One seed per run (SEED in vafpy.in, or 'random' / missing: drawn on rank 0 and broadcast); every rank uses the
+    # child stream `rank` of SeedSequence(seed)
     rank = afqmc.comm.Get_rank()
-    if afqmc.seed is None:
-        max_seed = np.iinfo(np.int32).max
-        seed = np.random.randint(max_seed)
-    else:
-        seed = int(afqmc.seed) + 9999 * rank
-    np.random.seed(seed)
+    seed, seed_source = new.run_seed(afqmc.seed, afqmc.comm)
+    rank_seq = new.seed_sequence(seed, rank)
+    np.random.seed(rank_seq.generate_state(1, np.uint32)[0])
+    if afqmc.first_cpu:
+        print("SEED                 = ", seed, f"({seed_source}; rank r uses SeedSequence({seed}, spawn_key=(r,)))")
+        print()
 
-    backend = new.make_backend(afqmc.Backend, seed)
+    backend = new.make_backend(afqmc.Backend, rank_seq)
 
     config = new.Configuration(
         num_walkers=afqmc.NUM_WALKERS,
@@ -65,6 +68,8 @@ def main():
         backend=backend,
     )
 
+    setup = timers.part("setup")
+    setup.__enter__()
     q_list = new.obtain_Q_list(config, afqmc.q_list_file)
     h2_host, layout = new.obtain_H2_host(config, afqmc.input_file_two_body_hamil)
     q_sizes = new.obtain_Q_sizes(config, afqmc.q_sizes_file) if layout == "compact" else None
@@ -95,6 +100,7 @@ def main():
 
     # Per-walker constant factor used by S2 propagator.
     h_0 = config.complex_type(np.exp(config.timestep * hamiltonian.H_zero))
+    setup.__exit__(None, None, None)
 
     # Open output files
     wr_name = "WALKERS.npy"
@@ -115,23 +121,28 @@ def main():
 
     j = 1
     while j < afqmc.NUM_STEPS + 1:
-        new_walkers, num_rare = new.propagate_walkers(
-            config, trial_det, walkers, hamiltonian, h_0, energy_new
-        )
+        with timers.part("propagate") as s:
+            new_walkers, num_rare = new.propagate_walkers(
+                config, trial_det, walkers, hamiltonian, h_0, energy_new, timers
+            )
+            s.done((new_walkers.slater_det, new_walkers.weights))
         walkers = new_walkers
         rare_event_total += num_rare
         if num_rare > 0:
             rare_event_steps += 1
 
         if j % afqmc.SAMP_FREQ == 0 and afqmc.first_cpu:       # one device-to-host copy per sample, not per step
-            weights_file.write(f"{j}:   {np.mean(config.backend.to_numpy(walkers.weights))}\n")
+            with timers.part("output"):
+                weights_file.write(f"{j}:   {np.mean(config.backend.to_numpy(walkers.weights))}\n")
 
         if j % afqmc.CHECK_PERIODICITY == 0:
-            np.save(wr_name, config.backend.to_numpy(walkers.slater_det))
-            np.save(wt_name, config.backend.to_numpy(walkers.weights))
+            with timers.part("checkpoint"):
+                np.save(wr_name, config.backend.to_numpy(walkers.slater_det))
+                np.save(wt_name, config.backend.to_numpy(walkers.weights))
 
         if j % afqmc.SAMP_FREQ == 0:
-            a = new.measure_energy(config, trial_det, walkers, hamiltonian)
+            with timers.part("energy"):
+                a = new.measure_energy(config, trial_det, walkers, hamiltonian, timers)
             energy_new = a[0]
             if not np.isfinite(energy_new):
                 if afqmc.first_cpu:
@@ -143,29 +154,33 @@ def main():
             c = a[2]
             e_hf = (e_hf * j + energy_new) / (j + 1)
             if afqmc.first_cpu:
-                print(j * afqmc.D_TAU, e_hf)
-                file_out.write(
-                    f"{j * afqmc.D_TAU}\t{energy_new.real}\t{energy_new.imag}"
-                    f"\t{b.real}\t{c.real}\n"
-                )
-                if j % 5000 == 0:
-                    file_out.flush()
+                with timers.part("output"):
+                    print(j * afqmc.D_TAU, e_hf)
+                    file_out.write(
+                        f"{j * afqmc.D_TAU}\t{energy_new.real}\t{energy_new.imag}"
+                        f"\t{b.real}\t{c.real}\n"
+                    )
+                    if j % 5000 == 0:
+                        file_out.flush()
 
         if j % afqmc.REORTHO_PERIODICITY == 0:
-            walkers.slater_det = new.reortho_qr(config, walkers.slater_det, afqmc.REORTHO_METHOD)
+            with timers.part("reortho") as s:
+                walkers.slater_det = s.done(new.reortho_qr(config, walkers.slater_det, afqmc.REORTHO_METHOD))
 
         if afqmc.REBAL_PERIODICITY != 0 and j % afqmc.REBAL_PERIODICITY == 0:
-            if afqmc.REBAL_METHOD == "global":
-                mats_np = config.backend.to_numpy(walkers.slater_det)
-                wts_np  = config.backend.to_numpy(walkers.weights)
-                mats_np, wts_np = new.rebalance_global(
-                    config.comm, mats_np, wts_np, config)
-                walkers.slater_det = config.backend.array(mats_np, dtype=config.complex_type)
-                walkers.weights    = config.backend.array(wts_np,  dtype=config.complex_type)
-            else:
-                idx = new.rebalance_comb(config, walkers.weights)
-                walkers.slater_det = walkers.slater_det[idx]
-                walkers.weights = new.init_walkers_weights(config, NUM_WALKERS)
+            with timers.part("rebalance") as s:
+                if afqmc.REBAL_METHOD == "global":
+                    mats_np = config.backend.to_numpy(walkers.slater_det)
+                    wts_np  = config.backend.to_numpy(walkers.weights)
+                    mats_np, wts_np = new.rebalance_global(
+                        config.comm, mats_np, wts_np, config)
+                    walkers.slater_det = config.backend.array(mats_np, dtype=config.complex_type)
+                    walkers.weights    = config.backend.array(wts_np,  dtype=config.complex_type)
+                else:
+                    idx = new.rebalance_comb(config, walkers.weights)
+                    walkers.slater_det = walkers.slater_det[idx]
+                    walkers.weights = new.init_walkers_weights(config, NUM_WALKERS)
+                s.done((walkers.slater_det, walkers.weights))
 
         j += 1
 
@@ -179,9 +194,39 @@ def main():
 
     # the statistics are evaluated by the first rank from the closed file; the others wait for it
     config.comm.Barrier()
-    if not afqmc.first_cpu:
-        return
+    if afqmc.first_cpu:
+        with timers.part("analysis"):
+            final_statistics(afqmc, seed, seed_source, rare_event_steps, rare_event_total)
 
+    # timing report (all ranks take part, rank 0 writes timing.txt and a summary in outcar.txt)
+    if timers.level > 0:
+        method = afqmc.REORTHO_METHOD
+        if method == "Auto":
+            method = "Cholesky" if isinstance(config.backend, new.JaxBackend) else "QR"
+        settings = [("system", afqmc.system), ("backend", afqmc.Backend), ("precision", afqmc.Precsion),
+                    ("k points", afqmc.num_k), ("orbitals per k", afqmc.num_orb),
+                    ("electrons per k and spin", afqmc.num_electrons_up), ("NGVEC", afqmc.num_g),
+                    ("H2 layout", layout), ("walkers per rank", afqmc.NUM_WALKERS), ("walkers in total",
+                    afqmc.NUM_WALKERS * config.comm.Get_size()), ("steps", afqmc.NUM_STEPS), ("DTAU", afqmc.D_TAU),
+                    ("propagator", f"{afqmc.propagator}, Taylor order {afqmc.order_trunc}"),
+                    ("reortho", f"{method} every {afqmc.REORTHO_PERIODICITY} steps"),
+                    ("population control", f"{afqmc.REBAL_METHOD} every {afqmc.REBAL_PERIODICITY} steps"),
+                    ("energy", f"every {afqmc.SAMP_FREQ} steps"), ("SEED", f"{seed} ({seed_source})")]
+        counts = None
+        if layout == "compact":
+            counts = timing.operation_counts(config.num_kpoint, config.num_orbital, config.num_electron,
+                                             config.num_g, hamiltonian._nmax, config.num_walkers,
+                                             config.order_propagation, config.propagator)
+        lines = timing.write_report(timers, config.comm, "timing.txt", settings, counts,
+                                    code_dir=os.path.dirname(os.path.abspath(__file__)), n_steps=afqmc.NUM_STEPS)
+        if afqmc.first_cpu:
+            with open("outcar.txt", "a") as outcar:
+                for line in lines:
+                    outcar.write(line + "\n")
+
+
+def final_statistics(afqmc, seed, seed_source, rare_event_steps, rare_event_total):
+    """Mean energy, standard error and statistics report from the output file (first rank only)."""
     with open(afqmc.output_file, "r") as f:
         data = np.loadtxt(f)
     if data.ndim == 1:
@@ -214,6 +259,7 @@ def main():
             for line in stat_analysis.summary_lines(stat_report):
                 print(line)
         with open("outcar.txt", "a") as outcar:
+            outcar.write(f"SEED = {seed} ({seed_source})\n")
             outcar.write("Calculating ground state energy\n")
             outcar.write(f"E_gs_afqmc = {np.mean(col[st:en])}\n")
             outcar.write(f"+- {std_err}\n")
