@@ -86,3 +86,19 @@ def test_rebalance_global_keeps_the_precision(dtype):
     m_new, w_new = new.rebalance_global(comm, mats, weights, _config(1))
     assert m_new.dtype == dtype and w_new.dtype == dtype
     assert m_new.shape == mats.shape and w_new.shape == weights.shape
+
+
+@pytest.mark.skipif(MPI.COMM_WORLD.Get_size() > 1, reason="the single-process path is used with one rank only")
+@pytest.mark.parametrize("dtype", [np.complex64, np.complex128])
+def test_single_process_resampling_gives_the_walkers_of_the_global_path(dtype):
+    """resample_indices_single (only the weights leave the device, the walkers are reordered in place) must give
+    exactly the walkers of rebalance_global with one rank and the same uniform number."""
+    comm = MPI.COMM_WORLD
+    for trial in range(30):
+        mats, weights = _walkers(dtype, trial, 0)
+        cfg = _config(trial)
+        cfg.backend.to_numpy = np.asarray
+        m_glob, w_glob = new.rebalance_global(comm, mats.copy(), weights.copy(), cfg)
+        idx = new.resample_indices_single(cfg, weights.copy())
+        assert np.array_equal(mats[idx], m_glob)
+        assert len(idx) == len(weights) and np.array_equal(w_glob, np.ones(len(weights), dtype=dtype))

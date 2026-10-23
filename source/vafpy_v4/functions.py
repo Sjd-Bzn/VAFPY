@@ -1301,6 +1301,28 @@ def rebalance_comb(config, weights):
     return new_indices.astype(np.int64)
 
 
+def comb_instances(config, weights):
+    """Comb resampling of all walkers: number of copies of every walker (float64 bookkeeping; one uniform number of
+    the backend, the same as in every earlier version of the global rebalance)."""
+    total_n = len(weights)
+    norm_w = weights * (total_n / np.sum(weights))
+    bias = -float(config.backend.random_uniform_scalar())
+    # running sum bias + w_0 + w_1 + ... in the same order of additions as a loop (identical rounding)
+    cum = np.cumsum(np.concatenate(([bias], norm_w)))[1:]
+    cur = np.ceil(cum).astype(int)
+    return np.diff(cur, prepend=0)
+
+
+def resample_indices_single(config, walkers_weights):
+    """Population control of a run with one MPI process: the same comb as rebalance_global, but only the weights go
+    to the host; the caller reorders the walkers on their device with the returned indices (walkers[idx]), so no
+    walker is copied to the host and back. Gives exactly the walkers of rebalance_global with one rank."""
+    w = np.ascontiguousarray(np.asarray(config.backend.to_numpy(walkers_weights)).real, dtype=np.float64)
+    idx = np.repeat(np.arange(len(w)), comb_instances(config, w))
+    assert len(idx) == len(w)
+    return idx
+
+
 def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
     """Global rebalance across MPI ranks.
 
@@ -1317,19 +1339,7 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
     all_weights = np.empty(total_n, dtype=np.float64) if rank == 0 else None
     comm.Gather(local_weights, all_weights, root=0)
 
-    instances = None
-    if rank == 0:
-        norm = total_n / np.sum(all_weights)
-        norm_w = all_weights * norm
-        bias = -float(config.backend.random_uniform_scalar())
-        instances = np.zeros(total_n, dtype=int)
-        cum = bias
-        prev = 0
-        for i in range(total_n):
-            cum += norm_w[i]
-            cur = int(np.ceil(cum))
-            instances[i] = cur - prev
-            prev = cur
+    instances = comb_instances(config, all_weights) if rank == 0 else None
 
     if rank != 0:
         instances = np.empty(total_n, dtype=int)

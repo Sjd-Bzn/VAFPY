@@ -186,7 +186,13 @@ def main():
 
         if afqmc.REBAL_PERIODICITY != 0 and j % afqmc.REBAL_PERIODICITY == 0:
             with timers.part("rebalance") as s:
-                if afqmc.REBAL_METHOD == "global":
+                if afqmc.REBAL_METHOD == "global" and config.comm.Get_size() == 1:
+                    # one process: nothing to exchange; only the weights go to the host, the walkers of both spins are
+                    # reordered on their device (same walkers as the global path with one rank)
+                    idx = config.backend.asarray(new.resample_indices_single(config, walkers.weights))
+                    walkers.dets = [d[idx] for d in walkers.dets]
+                    walkers.weights = config.backend.ones(NUM_WALKERS, dtype=config.complex_type)
+                elif afqmc.REBAL_METHOD == "global":
                     # the spin channels travel together: their columns are joined for the exchange between ranks
                     dets_np = [config.backend.to_numpy(d) for d in walkers.dets]
                     split = np.cumsum([d.shape[-1] for d in dets_np])[:-1]

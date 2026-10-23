@@ -169,7 +169,13 @@ def main():
 
         if afqmc.REBAL_PERIODICITY != 0 and j % afqmc.REBAL_PERIODICITY == 0:
             with timers.part("rebalance") as s:
-                if afqmc.REBAL_METHOD == "global":
+                if afqmc.REBAL_METHOD == "global" and config.comm.Get_size() == 1:
+                    # one process: nothing to exchange; only the weights go to the host, the walkers are reordered
+                    # on their device (same walkers as the global path with one rank)
+                    idx = config.backend.asarray(new.resample_indices_single(config, walkers.weights))
+                    walkers.slater_det = walkers.slater_det[idx]
+                    walkers.weights = config.backend.ones(NUM_WALKERS, dtype=config.complex_type)
+                elif afqmc.REBAL_METHOD == "global":
                     mats_np = config.backend.to_numpy(walkers.slater_det)
                     wts_np  = config.backend.to_numpy(walkers.weights)
                     mats_np, wts_np = new.rebalance_global(
