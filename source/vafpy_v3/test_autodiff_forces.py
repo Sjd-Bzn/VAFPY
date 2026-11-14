@@ -1,5 +1,7 @@
-"""Exactness of the derivative of the AFQMC energy by automatic differentiation (autodiff_forces.py), C 2x2x2
-primitive test data, double precision, JAX on the CPU.
+"""Exactness of the derivative of the AFQMC energy by automatic differentiation (autodiff_forces.py), double
+precision, JAX on the CPU, two systems:
+  gamma: diamond primitive cell, Gamma only, 16 orbitals, 4 occupied, NGVEC 136 (test/diamond_gamma_prim)
+  k222:  diamond primitive cell, 2x2x2 k-mesh, 8 bands/k, 4 occupied/k, NGVEC 1999 (test/diamond_kpoint, compact)
 
   - the differentiable step reproduces propagate_walkers + Cholesky re-orthogonalisation of functions.py
   - walkers = trial: dE/dlam = <V>_HF
@@ -18,21 +20,26 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 import functions as new  # noqa: E402
 import autodiff_forces as af  # noqa: E402
-from test_compact_hamiltonian import COMPACT, make_config, perturbed  # noqa: E402
+from test_compact_hamiltonian import _DATA_ROOT, COMPACT, make_config, perturbed  # noqa: E402
 
-pytestmark = pytest.mark.skipif(not os.path.isdir(COMPACT), reason="k-point test data not found (set AFQMC_DATA)")
+GAMMA = os.path.join(_DATA_ROOT, "test", "diamond_gamma_prim")
+SYSTEMS = {"gamma": (GAMMA, dict(nk=1, nb=16, ne=4, ng=136)),      # one k-point: compact layout = dense layout
+           "k222": (COMPACT, dict())}
 
 NW = 6
 
 
-@pytest.fixture(scope="module")
-def system():
-    config = make_config(NW, precision="Double", backend=new.JaxBackend(5))
-    q = new.obtain_Q_list(config, os.path.join(COMPACT, "Q_list.npy"))
-    h1 = new.obtain_H1(config, os.path.join(COMPACT, "H1_svd.npy"))
-    h2c, layout = new.obtain_H2_host(config, os.path.join(COMPACT, "H2_zip.npy"))
-    sizes = new.obtain_Q_sizes(config, os.path.join(COMPACT, "Q_sizes.npy"))
-    H = new.build_hamiltonian(config, h1, h2c, layout, q, sizes)
+@pytest.fixture(scope="module", params=list(SYSTEMS))
+def system(request):
+    path, sizes_kw = SYSTEMS[request.param]
+    if not os.path.isdir(path):
+        pytest.skip(f"test data {path} not found (set AFQMC_DATA)")
+    config = make_config(NW, precision="Double", backend=new.JaxBackend(5), **sizes_kw)
+    q = new.obtain_Q_list(config, os.path.join(path, "Q_list.npy"))
+    h1 = new.obtain_H1(config, os.path.join(path, "H1_svd.npy"))
+    h2c, _ = new.obtain_H2_host(config, os.path.join(path, "H2_zip.npy"))
+    sizes = new.obtain_Q_sizes(config, os.path.join(path, "Q_sizes.npy"))
+    H = new.build_hamiltonian(config, h1, h2c, "compact", q, sizes)
     trial, walkers = new.initialize_determinant(config)
     H.setup_energy_expressions(config, trial)
     model = af.Model(config, H, trial, V=np.asarray(h1))            # V = H1: dE/dlam = <H1>
