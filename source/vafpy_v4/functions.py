@@ -449,7 +449,7 @@ class Hamiltonian:
             constants=[1], optimize="greedy",
         )
         self._auxiliary_field = contract_expression(
-            "ijg, gw -> ijw", two_body_eo_be,
+            "ijg, gw -> wij", two_body_eo_be,
             (2 * config.num_g, config.num_walkers),
             constants=[0], optimize="greedy",
         )
@@ -563,12 +563,12 @@ def make_compact_kernels(be, nk, nb, ne, nmax, ng, kmap, sizes, has_mf, jit=Fals
         out = be.matmul(M.transpose(0, 2, 1), be.concatenate([u_pad, v_pad.conj()], axis=-1))   # q, (K2,b2,b1), 2w
         R1 = out[..., :nw].reshape(nk, nk, nb, nb, nw)                      # sum_g L u         [q,K2,b2,b1,w]
         R2 = out[..., nw:].conj().reshape(nk, nk, nb, nb, nw)               # sum_g conj(L) v
-        F1 = R1[qmap, ar[None, :]].transpose(0, 3, 1, 2, 4)                 # K1,b1,K2,b2,w
-        F2 = R2[qmapT, ar[:, None]].transpose(0, 2, 1, 3, 4)                # Ki,bi,Kj,bj,w
-        field = (F1 + F2).reshape(nbk, nbk, nw)
+        F1 = R1[qmap, ar[None, :]].transpose(4, 0, 3, 1, 2)                 # w,K1,b1,K2,b2
+        F2 = R2[qmapT, ar[:, None]].transpose(4, 0, 2, 1, 3)                # w,Ki,bi,Kj,bj
+        field = (F1 + F2).reshape(nw, nbk, nbk)                             # walker first: Taylor is a batched matmul
         if has_mf:                    # L_mf = L - c_g on the diagonal: subtract (sum_g c_g u_g + conj(c_g) v_g) * 1
             sw = (c * u).sum(axis=0) + (cc * v).sum(axis=0)
-            field = field - eye[:, :, None] * sw[None, None, :]
+            field = field - eye[None, :, :] * sw[:, None, None]
         return field * inv_sqrt
 
     def exchange(G, theta):
@@ -837,7 +837,7 @@ class HamiltonianCompact:
         return fb
 
     def _auxiliary_field(self, x):
-        """sum_g A_e x_e + A_o x_o as one dense (nb*nk, nb*nk, nw) matrix per spin channel, A_e = (L+L^+)/2,
+        """sum_g A_e x_e + A_o x_o as one dense (nw, nb*nk, nb*nk) matrix per spin channel, A_e = (L+L^+)/2,
         A_o = i(L-L^+)/2, built block by block: sector q and column k-point K2 fill the block (kmap[q,K2], K2); no
         dense L_g is formed. The same field x acts on both spins."""
         return unlist([ch.k["aux"](ch.M, self._c, self._c_conj, self._eye, x) for ch in self._chans])
@@ -1150,7 +1150,7 @@ def apply_taylor(config, matrix, slater_det):
     result = slater_det.copy()
     addend = slater_det
     for i in range(config.order_propagation):
-        addend = contract("pqw, wqi -> wpi", matrix, addend) / (i + 1)
+        addend = (matrix @ addend) / (i + 1)                      # matrix (w, p, q), walkers (w, q, i)
         result += addend
     return result
 

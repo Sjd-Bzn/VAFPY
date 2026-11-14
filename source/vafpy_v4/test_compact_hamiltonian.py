@@ -109,7 +109,7 @@ def test_auxiliary_field_matches_dense():
     x = rng.standard_normal((2 * NG, 5)) + 0.3j * rng.standard_normal((2 * NG, 5))   # complex like (random - force bias)
     xb = config.backend.array(x, dtype=config.complex_type)
     fd, fc = Hd._auxiliary_field(xb), Hc._auxiliary_field(xb)
-    assert np.asarray(fc).shape == (NB * NK, NB * NK, 5)
+    assert np.asarray(fc).shape == (5, NB * NK, NB * NK)          # walker first
     assert rel(fc, fd) < 1e-12
 
 

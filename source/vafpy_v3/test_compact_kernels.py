@@ -63,7 +63,7 @@ def test_auxiliary_field_matrix_matches_dense(system):
     x = rng.standard_normal((2 * NG, 6)) + 0.3j * rng.standard_normal((2 * NG, 6))
     xb = config.backend.array(x, dtype=config.complex_type)
     f_c, f_d = Hc._auxiliary_field(xb), Hd._auxiliary_field(xb)
-    assert np.asarray(f_c).shape == (NB * NK, NB * NK, 6)
+    assert np.asarray(f_c).shape == (6, NB * NK, NB * NK)          # walker first
     assert stats(f_c, f_d)[2] < 1e-12
 
 
