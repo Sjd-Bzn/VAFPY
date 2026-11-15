@@ -51,7 +51,7 @@ def main():
         print("SEED                 = ", seed, f"({seed_source}; rank r uses SeedSequence({seed}, spawn_key=(r,)))")
         print()
 
-    backend = new.make_backend(afqmc.Backend, rank_seq)
+    backend = new.make_backend(afqmc.Backend, rank_seq, afqmc.Precsion)
 
     config = new.Configuration(
         num_walkers=afqmc.NUM_WALKERS,

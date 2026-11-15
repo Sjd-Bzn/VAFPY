@@ -205,8 +205,11 @@ class NumpyBackend(Backend):
 
 
 class JaxBackend(Backend):
-    def __init__(self, seed):
+    def __init__(self, seed, double=False):
         jax, jnp = _try_import_jax()
+        # JAX stores complex128 as complex64 unless 64-bit types are enabled; needed for PRECSION = Double.
+        if double:
+            jax.config.update("jax_enable_x64", True)
         # Ampere/Ada GPUs use TF32 for matmuls by default; force full float32.
         jax.config.update("jax_default_matmul_precision", "float32")
         super().__init__(jnp)
@@ -276,13 +279,13 @@ class CupyBackend(Backend):
         return arr.get() if hasattr(arr, "get") else np.asarray(arr)
 
 
-def make_backend(name, seed):
+def make_backend(name, seed, precision="Single"):
     """seed: an integer or a SeedSequence (seed_sequence(run seed, rank) for the stream of one MPI rank)."""
     name = name.lower()
     if name == "numpy":
         return NumpyBackend(seed)
     if name == "jax":
-        return JaxBackend(seed)
+        return JaxBackend(seed, double=(precision == "Double"))
     if name == "cupy":
         return CupyBackend(seed)
     raise NotImplementedError(f"Backend '{name}' not implemented.")
