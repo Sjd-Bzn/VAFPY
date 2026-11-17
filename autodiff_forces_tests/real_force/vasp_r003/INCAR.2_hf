@@ -1,0 +1,6 @@
+########### HF Normal ###########
+ALGO       = Normal
+LHFCALC    = .TRUE. ; AEXX = 1.0
+#PREC       = Singlen
+#LMAXFOCKAE = 4
+#LFOCKAEDFT = .TRUE.

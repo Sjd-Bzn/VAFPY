@@ -1,0 +1,9 @@
+########### Natural Orbitals ###########
+ALGO = G0W0R
+NATURALO = 1
+NTAUPAR = 1
+NOMEGA = 14
+NELM = 1
+#PREC = Singlen
+#LMAXFOCKAE = 4
+#LFOCKAEDFT = .TRUE.

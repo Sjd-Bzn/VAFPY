@@ -1,0 +1,20 @@
+EDIFF         = 1.0E-8
+ISMEAR        = 0 ; SIGMA = 0.01
+LASPH         = .TRUE.
+########### for Amirs code ###########
+ISYM         = -1
+LORBITALREAL = .TRUE.
+
+########### fft grids ###########
+PRECFOCK = Single
+PREC = Single
+LMAXFOCKAE = 4
+LFOCKAEDFT = .True.
+
+
+
+
+ISPIN = 1
+LOPTICS = .TRUE.
+#MAXMEM = 27890
+

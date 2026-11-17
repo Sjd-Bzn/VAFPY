@@ -1,0 +1,43 @@
+#!/bin/bash
+#SBATCH --job-name=force_r003
+#SBATCH --partition=zen3_1024
+#SBATCH --qos=p71334_1024
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --exclusive
+#SBATCH --time=04:00:00
+#SBATCH --output=slurm_%j.out
+# AFQMC force at r003 (diamond primitive cell, Gamma, atom 2 at +0.03 A): AD (Martin, zero rule) and correlated FD
+# (h = 0.16, 0.08, 0.04 A), 400-step windows, 100 walkers. 64 independent chains (seeds 100-163, different from the
+# chains 0-7 and 10-17 on ne), each on 2 physical cores with 2 threads, 150 windows per chain.
+module load mpich/4.1.1-gcc-12.2.0-zggsu6w
+export LD_LIBRARY_PATH=$(dirname $(dirname $(which mpiexec)))/lib:$LD_LIBRARY_PATH
+source ~/.venv/vsc5_venv/bin/activate
+R=/gpfs/data/fs71334/sajad/autodiff_forces
+export PYTHONPATH=$R/testF_memory/minimal_pytest VAFPY_SRC=$R/code/vafpy_v3_b68443b AFQMC_DATA=$R/data \
+       FORCE_DATA=$R/force_r003/svd_joint JAX_PLATFORMS=cpu
+export OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2
+export XLA_FLAGS="--xla_cpu_multi_thread_eigen=true intra_op_parallelism_threads=2"
+cd $R/force_r003/afqmc_force
+echo "$(date) start on $(hostname), python $(which python), jax $(python -c 'import jax; print(jax.__version__)')"
+NCH=64
+# two logical CPUs on two different physical cores per chain, from the CPUs this job may use
+CORES=($(python - <<'PY'
+import os, subprocess
+allowed = os.sched_getaffinity(0)
+seen, out = set(), []
+for line in subprocess.run(["lscpu", "-p=CPU,CORE"], capture_output=True, text=True).stdout.splitlines():
+    if line.startswith("#"): continue
+    cpu, core = map(int, line.split(","))
+    if cpu in allowed and core not in seen:
+        seen.add(core); out.append(cpu)
+print(*out[:128])
+PY
+))
+echo "$(date) ${#CORES[@]} physical cores"
+for c in $(seq 0 $((NCH - 1))); do
+  taskset -c ${CORES[$((2 * c))]},${CORES[$((2 * c + 1))]} python -u run_fd.py $((100 + c)) 100 150 40 10 0.16,0.08,0.04 \
+      vsc5_$c.npz > vsc5_$c.log 2>&1 &
+done
+wait
+echo "$(date) FORCE_DONE"

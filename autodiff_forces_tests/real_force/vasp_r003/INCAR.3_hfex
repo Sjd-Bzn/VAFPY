@@ -1,0 +1,7 @@
+########### HF EXACT ###########
+ALGO = Exact
+LHFCALC = .TRUE. ; AEXX = 1.0
+NELM = 1
+#PREC = Singlen
+#LMAXFOCKAE = 4
+#LFOCKAEDFT = .TRUE.

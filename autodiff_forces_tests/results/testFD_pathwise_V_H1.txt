@@ -1,0 +1,25 @@
+40 windows of 40 blocks
+L = 40:  mean AD off 102.9208  zero 102.8771  Martin 102.9025
+   h=  1e-02  off: max|FD-AD| 3.2e-05   comb: median|FD-zero| 2.7e-05  median|FD-Martin| 2.2e-02  windows with jump  12.5%
+   h=  1e-03  off: max|FD-AD| 3.2e-07   comb: median|FD-zero| 2.7e-07  median|FD-Martin| 2.2e-02  windows with jump   2.5%
+   h=  1e-04  off: max|FD-AD| 1.6e-09   comb: median|FD-zero| 2.4e-10  median|FD-Martin| 2.2e-02  windows with jump   0.0%
+   h=  1e-05  off: max|FD-AD| 1.6e-08   comb: median|FD-zero| 9.4e-09  median|FD-Martin| 2.2e-02  windows with jump   0.0%
+   h=  1e-06  off: max|FD-AD| 1.0e-07   comb: median|FD-zero| 3.0e-08  median|FD-Martin| 2.2e-02  windows with jump   0.0%
+L = 100:  mean AD off 103.7652  zero 103.7167  Martin 103.8156
+   h=  1e-02  off: max|FD-AD| 1.6e-04   comb: median|FD-zero| 1.1e-04  median|FD-Martin| 8.6e-02  windows with jump  25.0%
+   h=  1e-03  off: max|FD-AD| 1.6e-06   comb: median|FD-zero| 1.1e-06  median|FD-Martin| 7.6e-02  windows with jump   5.0%
+   h=  1e-04  off: max|FD-AD| 1.0e-08   comb: median|FD-zero| 6.9e-09  median|FD-Martin| 7.5e-02  windows with jump   0.0%
+   h=  1e-05  off: max|FD-AD| 2.6e-08   comb: median|FD-zero| 1.6e-08  median|FD-Martin| 7.5e-02  windows with jump   0.0%
+   h=  1e-06  off: max|FD-AD| 2.2e-07   comb: median|FD-zero| 7.0e-08  median|FD-Martin| 7.5e-02  windows with jump   0.0%
+L = 200:  mean AD off 105.4764  zero 104.3345  Martin 104.4990
+   h=  1e-02  off: max|FD-AD| 9.2e-01   comb: median|FD-zero| 1.3e-01  median|FD-Martin| 4.4e-01  windows with jump  52.5%
+   h=  1e-03  off: max|FD-AD| 9.4e-03   comb: median|FD-zero| 2.1e-06  median|FD-Martin| 1.3e-01  windows with jump   5.0%
+   h=  1e-04  off: max|FD-AD| 9.4e-05   comb: median|FD-zero| 1.7e-08  median|FD-Martin| 1.2e-01  windows with jump   0.0%
+   h=  1e-05  off: max|FD-AD| 5.0e-07   comb: median|FD-zero| 2.2e-08  median|FD-Martin| 1.2e-01  windows with jump   0.0%
+   h=  1e-06  off: max|FD-AD| 7.8e-06   comb: median|FD-zero| 1.3e-07  median|FD-Martin| 1.2e-01  windows with jump   0.0%
+L = 400:  mean AD off 104.2451  zero 104.0848  Martin 104.3132
+   h=  1e-02  off: max|FD-AD| 2.9e-01   comb: median|FD-zero| 4.9e+00  median|FD-Martin| 4.8e+00  windows with jump  85.0%
+   h=  1e-03  off: max|FD-AD| 2.5e-03   comb: median|FD-zero| 2.7e-06  median|FD-Martin| 1.8e-01  windows with jump  15.0%
+   h=  1e-04  off: max|FD-AD| 2.5e-05   comb: median|FD-zero| 2.1e-08  median|FD-Martin| 1.7e-01  windows with jump   0.0%
+   h=  1e-05  off: max|FD-AD| 9.7e-08   comb: median|FD-zero| 2.1e-08  median|FD-Martin| 1.7e-01  windows with jump   0.0%
+   h=  1e-06  off: max|FD-AD| 1.1e-06   comb: median|FD-zero| 1.3e-07  median|FD-Martin| 1.7e-01  windows with jump   0.0%

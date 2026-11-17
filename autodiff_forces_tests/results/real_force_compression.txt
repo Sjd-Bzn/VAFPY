@@ -1,0 +1,8 @@
+threshold 1e-03: kept  161 of 6422   rel.err  LL+ 1.7e-06  L dL+ 8.6e-07  dL dL+ 2.1e-07
+threshold 1e-04: kept  170 of 6422   rel.err  LL+ 2.9e-09  L dL+ 7.7e-09  dL dL+ 7.3e-09
+threshold 1e-05: kept  173 of 6422   rel.err  LL+ 2.6e-11  L dL+ 5.5e-11  dL dL+ 4.2e-11
+threshold 1e-06: kept  177 of 6422   rel.err  LL+ 6.7e-13  L dL+ 1.2e-12  dL dL+ 8.0e-13
+1e-03: ng  161   E 113.6480788011 (+1.8e-05)   dE/dx 0.86412802 (+4.0e-06)
+1e-04: ng  170   E 113.6480608461 (-5.6e-09)   dE/dx 0.86412391 (-9.9e-08)
+1e-05: ng  173   E 113.6480608523 (+6.5e-10)   dE/dx 0.86412401 (+6.3e-10)
+1e-06: ng  177   E 113.6480608517 (+4.8e-11)   dE/dx 0.86412401 (+4.7e-10)

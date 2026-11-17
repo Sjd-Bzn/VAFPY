@@ -1,0 +1,39 @@
+EDIFF         = 1.0E-8
+ISMEAR        = 0 ; SIGMA = 0.01
+LASPH         = .TRUE.
+########### for Amirs code ###########
+ISYM         = -1
+LORBITALREAL = .TRUE.
+
+########### fft grids ###########
+PRECFOCK = Single
+PREC = Single
+LMAXFOCKAE = 4
+LFOCKAEDFT = .True.
+
+
+
+
+ISPIN = 1
+LOPTICS = .TRUE.
+#MAXMEM = 27890
+
+LHFCALC = .TRUE. ; AEXX = 1.0
+ALGO = AFQMC
+AFQMC {
+   HF_REFERENCE = .False.
+   SINGULARITY = 0
+   BETA = 0.001
+   BLOCKS = 0
+   BLOCKS_SAMP = 0
+   STEPS_PER_BLOCK = 0
+   WALKERS = 8
+   EXPORT = 0
+}
+NBANDS = 16
+ENCUT = 1000
+ENCUTGW = 4000
+ENCUTGWSOFT = 4000
+ISTART = 1
+LWAVE = .FALSE.
+LCHARG = .FALSE.

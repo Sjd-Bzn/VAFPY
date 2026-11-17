@@ -1,0 +1,76 @@
+k222 100 1000 rev
+k222 100 1000 ckpt
+k222 100 1000 fwd
+k222 100 1000 plain
+k222 1600 100 rev
+k222 1600 100 ckpt
+k222 1600 100 fwd
+k222 1600 100 plain
+k222 100 400 rev
+k222 100 400 ckpt
+k222 100 400 fwd
+k222 100 400 plain
+k222 400 100 rev
+k222 400 100 ckpt
+k222 400 100 fwd
+k222 400 100 plain
+k222 100 400 rev Single
+k222 100 400 ckpt Single
+k222 100 400 fwd Single
+k222 100 400 plain Single
+k222 100 200 rev
+k222 100 200 ckpt
+k222 100 200 fwd
+k222 100 200 plain
+k222 100 100 rev
+k222 100 100 ckpt
+k222 100 100 fwd
+k222 100 100 plain
+k222 100 40 rev
+k222 100 40 ckpt
+k222 100 40 fwd
+k222 100 40 plain
+k222 100 10 rev
+k222 100 10 ckpt
+k222 100 10 fwd
+k222 100 10 plain
+gamma 1600 1000 rev
+gamma 1600 1000 ckpt
+gamma 1600 1000 fwd
+gamma 1600 1000 plain
+gamma 1600 400 rev
+gamma 1600 400 ckpt
+gamma 1600 400 fwd
+gamma 1600 400 plain
+gamma 400 400 rev
+gamma 400 400 ckpt
+gamma 400 400 fwd
+gamma 400 400 plain
+gamma 100 1000 rev
+gamma 100 1000 ckpt
+gamma 100 1000 fwd
+gamma 100 1000 plain
+gamma 100 400 rev
+gamma 100 400 ckpt
+gamma 100 400 fwd
+gamma 100 400 plain
+gamma 100 400 rev Single
+gamma 100 400 ckpt Single
+gamma 100 400 fwd Single
+gamma 100 400 plain Single
+gamma 100 200 rev
+gamma 100 200 ckpt
+gamma 100 200 fwd
+gamma 100 200 plain
+gamma 100 100 rev
+gamma 100 100 ckpt
+gamma 100 100 fwd
+gamma 100 100 plain
+gamma 100 40 rev
+gamma 100 40 ckpt
+gamma 100 40 fwd
+gamma 100 40 plain
+gamma 100 10 rev
+gamma 100 10 ckpt
+gamma 100 10 fwd
+gamma 100 10 plain

@@ -1,0 +1,9 @@
+E_HF (electronic) code 113.6480608517   yaml E1+DENC+EXHF 113.6480608517   diff +3.07e-12
+dE/dx code (AD, dH/dR in)  0.86412401 eV/A
+dE/dx finite difference    0.86416033 eV/A   diff -3.63e-05
+   E1    +0.801939
+   DENC  +0.042735
+   EXHF  +0.019487
+   one-body part (dH1 only) +0.801939
+   two-body part (dL only)  +0.062185
+around the midpoint: dE/dx code 0.8641603328   finite difference 0.8641603329   diff -3.27e-11

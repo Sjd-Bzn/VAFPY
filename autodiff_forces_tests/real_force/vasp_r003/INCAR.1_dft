@@ -1,0 +1,5 @@
+########### DFT ###########
+ALGO = Normal
+#PREC = Accurate
+#LMAXFOCKAE = 4            #### more accurate but expensive
+#LFOCKAEDFT = .TRUE.        
