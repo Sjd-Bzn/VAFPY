@@ -305,9 +305,14 @@ def write_report(timers, comm, path, settings, counts=None, code_dir=None, n_ste
     flop_lines = []
     if counts:
         w("")
+        try:
+            nthr = max(int(os.environ.get("OMP_NUM_THREADS", "1")), 1)
+        except ValueError:
+            nthr = 1
         w("Floating-point operations (estimates from the matrix sizes, 8 flops per complex multiply-add)")
-        w(f"  {'part':<40}{'calls':>9}{'GFLOP/call':>12}{'GFLOP/s rank':>14}{'GFLOP/s run':>14}")
-        w("  " + "-" * 89)
+        w(f"  GFLOP/s core = GFLOP/s rank / OMP_NUM_THREADS ({nthr}); on a GPU, GFLOP/s rank is the rate of the device")
+        w(f"  {'part':<40}{'calls':>9}{'GFLOP/call':>12}{'GFLOP/s rank':>14}{'GFLOP/s core':>14}{'GFLOP/s run':>14}")
+        w("  " + "-" * 103)
         tot_f, tot_t = 0.0, 0.0
         for i, p in enumerate(paths):
             key = p if p in counts else None
@@ -318,13 +323,14 @@ def write_report(timers, comm, path, settings, counts=None, code_dir=None, n_ste
             fl = counts[key] * ncalls[i]
             name = "  " * p.count("/") + p.split("/")[-1]
             w(f"  {name:<40}{int(ncalls[i]):>9}{counts[key] / 1e9:>12.4f}{fl / tmax[i] / 1e9:>14.2f}"
-              f"{size * fl / tmax[i] / 1e9:>14.1f}")
+              f"{fl / tmax[i] / 1e9 / nthr:>14.2f}{size * fl / tmax[i] / 1e9:>14.1f}")
             if "/" not in p:
                 tot_f += fl
                 tot_t += tmax[i]
         if tot_t > 0:
-            w("  " + "-" * 89)
-            w(f"  {'counted parts':<40}{'':>9}{'':>12}{tot_f / tot_t / 1e9:>14.2f}{size * tot_f / tot_t / 1e9:>14.1f}")
+            w("  " + "-" * 103)
+            w(f"  {'counted parts':<40}{'':>9}{'':>12}{tot_f / tot_t / 1e9:>14.2f}{tot_f / tot_t / 1e9 / nthr:>14.2f}"
+              f"{size * tot_f / tot_t / 1e9:>14.1f}")
             flop_lines.append(f"Floating-point rate of the counted parts = {tot_f / tot_t / 1e9:.2f} GFLOP/s per rank,"
                              f" {size * tot_f / tot_t / 1e9:.1f} GFLOP/s in total")
     w("")

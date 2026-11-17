@@ -242,7 +242,8 @@ def main():
                     ("population control", f"{afqmc.REBAL_METHOD} every {afqmc.REBAL_PERIODICITY} steps"),
                     ("energy", f"every {afqmc.SAMP_FREQ} steps"), ("SEED", f"{seed} ({seed_source})")]
         counts = None
-        if layout == "compact":     # summed over the spin channels, each with its own number of electrons
+        if layout == "compact" or config.spin_polarized:   # spin runs use the compact Hamiltonian for any input;
+            # summed over the spin channels, each with its own number of electrons
             nes = [afqmc.num_electrons_up] + ([afqmc.num_electrons_down] if len(config.channels) == 2 else [])
             for ne_c in nes:
                 c = timing.operation_counts(config.num_kpoint, config.num_orbital, ne_c, config.num_g,
