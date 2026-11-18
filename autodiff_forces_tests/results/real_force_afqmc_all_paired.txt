@@ -1,0 +1,8 @@
+12000 windows; paired against the zero rule (eV/A)
+L= 40: Martin-zero +0.050(0.003)  FD0.16-zero +0.022(0.009)  FD0.08-zero +0.034(0.014)  FD0.04-zero +0.028(0.022)
+L=100: Martin-zero +0.076(0.006)  FD0.16-zero -0.036(0.020)  FD0.08-zero +0.027(0.040)  FD0.04-zero +0.047(0.059)
+L=200: Martin-zero +0.040(0.013)  FD0.16-zero -0.228(0.034)  FD0.08-zero -0.113(0.040)  FD0.04-zero -0.028(0.060)
+L=400: Martin-zero -0.014(0.031)  FD0.16-zero -0.511(0.071)  FD0.08-zero -0.131(0.073)  FD0.04-zero +0.001(0.108)
+400 steps: |AD - median| percentiles 50/99/99.9: [ 0.909  8.388 52.882]  max 668.14
+  windows with |dev| < 5 x typical width: 0.984;  AD -0.723  zero -0.718  FD0.08 -0.846
+  windows with |dev| < 10 x typical width: 0.995;  AD -0.750  zero -0.731  FD0.08 -0.879

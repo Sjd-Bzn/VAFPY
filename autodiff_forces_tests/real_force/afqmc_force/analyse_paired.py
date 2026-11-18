@@ -3,7 +3,7 @@ windows, with errors from blocks of consecutive windows; distribution of the per
 import sys, glob
 import numpy as np
 pat = sys.argv[1] if len(sys.argv) > 1 else "prod_*.npz"
-Z = [np.load(f) for f in sorted(glob.glob(pat))]
+Z = [np.load(f) for f in sorted(f for p in pat.split(",") for f in glob.glob(p))]
 cat = lambda k: np.concatenate([z[k] for z in Z]); hs = Z[0]["hs"]
 am, az, Ep, Em = cat("ad_martin"), cat("ad_zero"), cat("Ep"), cat("Em")
 fd = (Ep - Em) / (2 * hs[None, :, None])

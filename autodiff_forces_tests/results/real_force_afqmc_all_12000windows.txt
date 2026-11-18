@@ -1,0 +1,21 @@
+12000 windows (72 chains); HF dE/dx = 0.8641; classical d(Ewald + PAWdc)/dx = 2.5518
+L= 40: E 108.0015(0.0125)  AD Martin -0.0117(0.0120) [spread 1.294]  zero -0.0621(0.0105)
+        FD h=0.160 A -0.0397(0.0138) [spread 1.507]   FD - Martin -0.0279(0.0107)
+        FD h=0.080 A -0.0279(0.0174) [spread 1.847]   FD - Martin -0.0162(0.0142)
+        FD h=0.040 A -0.0337(0.0232) [spread 2.583]   FD - Martin -0.0219(0.0210)
+        force on atom 2 (Martin): F_x = -(dE/dx + 2.5518) = -2.5401(0.0120) eV/A   [HF -3.4159]
+L=100: E 108.0046(0.0094)  AD Martin -0.2603(0.0146) [spread 1.532]  zero -0.3368(0.0130)
+        FD h=0.160 A -0.3729(0.0215) [spread 2.341]   FD - Martin -0.1126(0.0203)
+        FD h=0.080 A -0.3099(0.0357) [spread 3.805]   FD - Martin -0.0496(0.0356)
+        FD h=0.040 A -0.2894(0.0571) [spread 6.202]   FD - Martin -0.0291(0.0561)
+        force on atom 2 (Martin): F_x = -(dE/dx + 2.5518) = -2.2915(0.0146) eV/A   [HF -3.4159]
+L=200: E 107.9995(0.0107)  AD Martin -0.5511(0.0275) [spread 3.003]  zero -0.5908(0.0229)
+        FD h=0.160 A -0.8193(0.0356) [spread 4.026]   FD - Martin -0.2682(0.0358)
+        FD h=0.080 A -0.7033(0.0425) [spread 4.505]   FD - Martin -0.1523(0.0422)
+        FD h=0.040 A -0.6189(0.0586) [spread 6.360]   FD - Martin -0.0678(0.0581)
+        force on atom 2 (Martin): F_x = -(dE/dx + 2.5518) = -2.0007(0.0275) eV/A   [HF -3.4159]
+L=400: E 107.9955(0.0186)  AD Martin -0.7392(0.0809) [spread 8.638]  zero -0.7250(0.0697)
+        FD h=0.160 A -1.2356(0.0286) [spread 3.328]   FD - Martin -0.4964(0.0836)
+        FD h=0.080 A -0.8563(0.0945) [spread 9.919]   FD - Martin -0.1171(0.0662)
+        FD h=0.040 A -0.7244(0.0848) [spread 9.394]   FD - Martin +0.0149(0.1130)
+        force on atom 2 (Martin): F_x = -(dE/dx + 2.5518) = -1.8125(0.0809) eV/A   [HF -3.4159]

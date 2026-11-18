@@ -3,7 +3,7 @@ import sys, glob
 import numpy as np
 from common import DE_HF, DX_CLASSICAL
 pat = sys.argv[1] if len(sys.argv) > 1 else "pilot_*.npz"
-Z = [np.load(f) for f in sorted(glob.glob(pat))]
+Z = [np.load(f) for f in sorted(f for p in pat.split(",") for f in glob.glob(p))]
 hs, block = Z[0]["hs"], int(Z[0]["block"])
 cat = lambda k: np.concatenate([z[k] for z in Z])
 am, az, Ep, Em, E = cat("ad_martin"), cat("ad_zero"), cat("Ep"), cat("Em"), cat("E")
