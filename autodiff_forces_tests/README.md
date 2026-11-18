@@ -16,7 +16,7 @@ System of all tests: diamond primitive cell (2 atoms), Gamma point, 16 orbitals 
 |---|---|
 | `exactness/` | the 12 exactness tests of `test_autodiff_forces.py` without pytest (`run_exact.py`), long windows (`long.py`) |
 | `testA_bias/` | rebalancing rules (Martin, zero, off), 8 chains x 1000 windows of 40 steps |
-| `testBC_window/` | window length (up to 1000 steps), noise; fixed-lambda reference energies |
+| `testBC_window/` | window length (up to 1000 steps), noise; fixed-lambda reference energies; mixed estimator of <H1> (`run_mixed.py`) and figure (`plot_window_mixed.py`) |
 | `testFD_validation/` | pathwise finite difference (`run_path.py`) and ensemble finite difference with common random numbers (`run_fd.py`), analyses |
 | `testF_memory/` | memory and time against window length, walkers and system (ne CPU, he GPU, VSC5 CPU), `plot_memory.py` |
 
