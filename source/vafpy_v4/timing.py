@@ -96,7 +96,8 @@ def jax_sync(x):
 #  operation counts (complex multiply-adds per call, for all walkers of one rank; compact H2 layout)
 # ---------------------------------------------------------------------------------------------------------------------
 def operation_counts(nk, nb, ne, ng, nmax, nw, order, propagator="S2", nspin=1):
-    """nspin = 2 (spin-unrestricted): every count is done once per spin channel."""
+    """nspin = 2 (spin-unrestricted): every count is done once per spin channel; exp_h1 and taylor are
+    called once per channel, so their count per call is that of one channel."""
     nbk, nek = nk * nb, nk * ne
     biorth = nw * (2 * nbk * nek ** 2 + nek ** 3)                 # trial^T Psi, inverse, Psi (trial^T Psi)^-1
     pq = nw * 2 * nk * nk * nmax * nb * ne                         # P and Q: batched products over q
@@ -125,7 +126,10 @@ def operation_counts(nk, nb, ne, ng, nmax, nw, order, propagator="S2", nspin=1):
     c["propagate/aux_field"] = pq + aux
     c["propagate"] = biorth + pq + aux + (2 if propagator == "S2" else 1) * h1 + taylor + proj
     c["energy"] = biorth + one + pq + exch
-    return {k: 8.0 * nspin * v for k, v in c.items()}
+    c = {k: nspin * v for k, v in c.items()}
+    # exp_h1 and taylor are timed once per spin channel: their count per call stays that of one channel
+    c["propagate/exp_h1"], c["propagate/taylor"] = h1, taylor
+    return {k: 8.0 * v for k, v in c.items()}
 
 
 # ---------------------------------------------------------------------------------------------------------------------
