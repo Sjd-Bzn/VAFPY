@@ -18,6 +18,9 @@ Population control (comb, as in run_kpts) has three modes for the derivative:
   "off":    no population control
 The comb indices and the random fields do not depend on lam (fixed random numbers): the derivative is the
 derivative along one auxiliary-field trajectory. Phase kills and the |a| > 10 cut have zero derivative.
+Optional local-energy cap (ecap): a walker with a very small overlap with the trial has a local energy far from E
+and, through the derivative, a single walker can shift dE/dlam of a block by tens of eV. With ecap the local
+energies of the estimator are clipped to e0 +- ecap (default width sqrt(2 / dtau)).
 
 Usage (see test_autodiff_forces.py):
     model = Model(config, hamiltonian, trial, V)          # config with the JAX backend, H set up for the trial
@@ -113,7 +116,7 @@ class Model:
     folded into the program), the sizes and kernels are static."""
 
     ARRAYS = ("M", "c", "cc", "eye", "G", "sqrt_tau", "h0", "h1_total", "h1_bare", "trial", "V", "L", "dL")
-    STATIC = ("dtau", "nk", "order", "ctype", "rtype", "kernels", "sing", "ng", "nw", "nb", "ne", "kmap", "sizes")
+    STATIC = ("dtau", "nk", "order", "ctype", "rtype", "kernels", "sing", "ng", "nw", "nb", "ne", "kmap", "sizes", "ecap")
 
     def tree_flatten(self):
         return tuple(getattr(self, a) for a in self.ARRAYS), tuple(getattr(self, s) for s in self.STATIC)
@@ -131,7 +134,9 @@ class Model:
     def k(self):
         return dict(self.kernels)
 
-    def __init__(self, config, hamiltonian, trial, V, L=None, dL=None):
+    def __init__(self, config, hamiltonian, trial, V, L=None, dL=None, ecap=None):
+        """ecap: None (no cap), a width in eV, or "auto" = sqrt(2 / dtau): in the energy estimator the real part
+        of every local energy is clipped to e0 +- ecap (a clipped walker has no derivative of its local energy)."""
         H = hamiltonian
         if not isinstance(H, new.HamiltonianCompact):
             raise NotImplementedError("the derivative is implemented for the compact H2 layout")
@@ -139,6 +144,7 @@ class Model:
             raise NotImplementedError("the derivative needs the JAX backend")
         dt = config.timestep
         self.dtau = dt
+        self.ecap = None if ecap is None else float(np.sqrt(2 / dt) if ecap == "auto" else ecap)
         self.nk = config.num_kpoint
         self.order = config.order_propagation
         if config.propagator != "S2":
@@ -193,8 +199,11 @@ class Model:
         ex = -self.k["exchange"](P["G"], th) + self.sing
         return e1 + (eh + ex) / self.nk
 
-    def mixed_energy(self, lam, dets, weights, P=None):
+    def mixed_energy(self, lam, dets, weights, P=None, e_ref=None):
+        """Mixed energy; with self.ecap and a reference energy e_ref the local energies are capped to e_ref +- ecap."""
         e = self.local_energy(lam, dets, P)
+        if self.ecap is not None and e_ref is not None:
+            e = jnp.clip(jnp.real(e), e_ref - self.ecap, e_ref + self.ecap) + 1j * jnp.imag(e)
         return jnp.real(jnp.sum(weights * e) / jnp.sum(weights))
 
     def overlap(self, dets):
@@ -267,7 +276,7 @@ class Model:
             d, w = carry
             kb = jax.random.fold_in(key, b)
             (d, w, _), _ = jax.lax.scan(one_step, (d, w, kb), jnp.arange(block))
-            e = self.mixed_energy(lam, d, w, P)
+            e = self.mixed_energy(lam, d, w, P, e0)
             u = jax.random.uniform(jax.random.fold_in(kb, block + 1), (), dtype=self.rtype)
             d, w = self.rebalance(d, w, u, rebalance)
             return (d, w), e

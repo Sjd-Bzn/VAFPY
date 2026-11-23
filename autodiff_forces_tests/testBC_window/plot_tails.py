@@ -10,7 +10,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-Z = [np.load(f) for f in sorted(glob.glob(sys.argv[1] + "/eqw_*.npz"))]
+Z = [np.load(f) for f in sorted(glob.glob(sys.argv[1] + "/eqw*_*.npz"))]
 blk = int(Z[0]["block"]); steps = int(sys.argv[3]) if len(sys.argv) > 3 else 400; i = steps // blk - 1
 nwin = min(len(z["E"]) for z in Z)
 # windows in time order across chains: chain c contributes its windows in order; interleave so the running mean mixes chains
