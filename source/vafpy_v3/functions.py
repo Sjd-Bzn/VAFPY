@@ -7,6 +7,7 @@ follows the legacy reference in Code/opt.
 """
 from dataclasses import dataclass
 import os
+import secrets
 import types
 from time import time
 
@@ -15,6 +16,8 @@ import scipy
 from scipy.linalg import expm, block_diag
 from mpi4py import MPI
 from opt_einsum import contract, contract_expression
+
+from timing import NULL_TIMERS
 
 
 # ---------- optional accelerators (only imported if requested) -------------
@@ -150,6 +153,24 @@ def build_default_q_list(num_k):
 # =========================================================================
 #  Backend abstraction
 # =========================================================================
+def run_seed(value, comm):
+    """Seed of the run from SEED in vafpy.in: an integer, or 'random' (also when SEED is missing), in which case rank 0
+    draws 63 bits from the operating system and broadcasts them, so that all ranks share one seed that is printed.
+    Returns (seed, source) with source 'input' or 'random'."""
+    if value is None or str(value).strip().lower() == "random":
+        seed = secrets.randbits(63) if comm.Get_rank() == 0 else None
+        return comm.bcast(seed, root=0), "random"
+    return int(value), "input"
+
+
+def seed_sequence(seed, rank=None):
+    """SeedSequence of one stream: for an MPI rank the child `rank` of SeedSequence(seed), i.e. the same as
+    SeedSequence(seed).spawn(n_ranks)[rank]; independent streams for all ranks, and different seeds never overlap."""
+    if isinstance(seed, np.random.SeedSequence):
+        return seed
+    return np.random.SeedSequence(seed) if rank is None else np.random.SeedSequence(seed, spawn_key=(rank,))
+
+
 class Backend:
     """Thin wrapper that proxies missing attributes to the wrapped module."""
 
@@ -165,7 +186,7 @@ class NumpyBackend(Backend):
         super().__init__(np)
         self.block_diag = scipy.linalg.block_diag
         self.expm = scipy.linalg.expm
-        self._rng = np.random.default_rng(seed)
+        self._rng = np.random.default_rng(seed_sequence(seed))   # PCG64
 
     def random_normal(self, shape, dtype):
         return self._rng.standard_normal(shape).astype(dtype)
@@ -184,14 +205,18 @@ class NumpyBackend(Backend):
 
 
 class JaxBackend(Backend):
-    def __init__(self, seed):
+    def __init__(self, seed, double=False):
         jax, jnp = _try_import_jax()
+        # JAX stores complex128 as complex64 unless 64-bit types are enabled; needed for PRECSION = Double.
+        if double:
+            jax.config.update("jax_enable_x64", True)
         # Ampere/Ada GPUs use TF32 for matmuls by default; force full float32.
         jax.config.update("jax_default_matmul_precision", "float32")
         super().__init__(jnp)
         self._jax = jax
         self._jnp = jnp
-        self._key = jax.random.key(seed)
+        # threefry key from two 32-bit words of the SeedSequence (all 63 bits of the seed and the rank enter)
+        self._key = jax.random.wrap_key_data(np.asarray(seed_sequence(seed).generate_state(2, np.uint32)))
 
     def block_diag(self, *matrices):
         # scipy on host side, then ship to device — keeps things simple.
@@ -226,7 +251,7 @@ class CupyBackend(Backend):
         cp = _try_import_cupy()
         super().__init__(cp)
         self._cp = cp
-        self._rng = cp.random.default_rng(seed)
+        self._rng = cp.random.default_rng(int(seed_sequence(seed).generate_state(1, np.uint64)[0]))
 
     def block_diag(self, *matrices):
         on_host = [m.get() if hasattr(m, "get") else np.asarray(m) for m in matrices]
@@ -254,12 +279,13 @@ class CupyBackend(Backend):
         return arr.get() if hasattr(arr, "get") else np.asarray(arr)
 
 
-def make_backend(name, seed):
+def make_backend(name, seed, precision="Single"):
+    """seed: an integer or a SeedSequence (seed_sequence(run seed, rank) for the stream of one MPI rank)."""
     name = name.lower()
     if name == "numpy":
         return NumpyBackend(seed)
     if name == "jax":
-        return JaxBackend(seed)
+        return JaxBackend(seed, double=(precision == "Double"))
     if name == "cupy":
         return CupyBackend(seed)
     raise NotImplementedError(f"Backend '{name}' not implemented.")
@@ -394,7 +420,7 @@ class Hamiltonian:
             constants=[1], optimize="greedy",
         )
         self._auxiliary_field = contract_expression(
-            "ijg, gw -> ijw", two_body_eo_be,
+            "ijg, gw -> wij", two_body_eo_be,
             (2 * config.num_g, config.num_walkers),
             constants=[0], optimize="greedy",
         )
@@ -415,7 +441,7 @@ class Hamiltonian:
             )
         return self.test_random_field
 
-    def create_auxiliary_field(self, config, theta):
+    def create_auxiliary_field(self, config, theta, timers=NULL_TIMERS):
         random_field = self.create_random_field(config)
         force_bias = -2j * self._sqrt_tau * self._force_bias_expression(theta)
         # boundary condition for rare events
@@ -508,12 +534,12 @@ def make_compact_kernels(be, nk, nb, ne, nmax, ng, kmap, sizes, has_mf, jit=Fals
         out = be.matmul(M.transpose(0, 2, 1), be.concatenate([u_pad, v_pad.conj()], axis=-1))   # q, (K2,b2,b1), 2w
         R1 = out[..., :nw].reshape(nk, nk, nb, nb, nw)                      # sum_g L u         [q,K2,b2,b1,w]
         R2 = out[..., nw:].conj().reshape(nk, nk, nb, nb, nw)               # sum_g conj(L) v
-        F1 = R1[qmap, ar[None, :]].transpose(0, 3, 1, 2, 4)                 # K1,b1,K2,b2,w
-        F2 = R2[qmapT, ar[:, None]].transpose(0, 2, 1, 3, 4)                # Ki,bi,Kj,bj,w
-        field = (F1 + F2).reshape(nbk, nbk, nw)
+        F1 = R1[qmap, ar[None, :]].transpose(4, 0, 3, 1, 2)                 # w,K1,b1,K2,b2
+        F2 = R2[qmapT, ar[:, None]].transpose(4, 0, 2, 1, 3)                # w,Ki,bi,Kj,bj
+        field = (F1 + F2).reshape(nw, nbk, nbk)                             # walker first: Taylor is a batched matmul
         if has_mf:                    # L_mf = L - c_g on the diagonal: subtract (sum_g c_g u_g + conj(c_g) v_g) * 1
             sw = (c * u).sum(axis=0) + (cc * v).sum(axis=0)
-            field = field - eye[:, :, None] * sw[None, None, :]
+            field = field - eye[None, :, :] * sw[:, None, None]
         return field * inv_sqrt
 
     def exchange(G, theta):
@@ -716,16 +742,19 @@ class HamiltonianCompact:
         return self._k["force_bias"](self._M, self._c, self._c_conj, theta)
 
     def _auxiliary_field(self, x):
-        """sum_g A_e x_e + A_o x_o as one dense (nb*nk, nb*nk, nw) matrix, A_e = (L+L^+)/2, A_o = i(L-L^+)/2,
+        """sum_g A_e x_e + A_o x_o as one dense (nw, nb*nk, nb*nk) matrix, A_e = (L+L^+)/2, A_o = i(L-L^+)/2,
         built block by block: sector q and column k-point K2 fill the block (kmap[q,K2], K2); no dense L_g is formed."""
         return self._k["aux"](self._M, self._c, self._c_conj, self._eye, x)
 
-    def create_auxiliary_field(self, config, theta):
-        random_field = self.create_random_field(config)
-        force_bias = -2j * self._sqrt_tau * self._force_bias(theta)
-        force_bias = config.backend.where(abs(force_bias) > 1, 0.0, force_bias)
-        arg = contract("gw, gw -> w", random_field - 0.5 * force_bias, force_bias)
-        field = 1j * self._sqrt_tau * self._auxiliary_field(random_field - force_bias)
+    def create_auxiliary_field(self, config, theta, timers=NULL_TIMERS):
+        with timers.stage("random_field") as s:
+            random_field = s.done(self.create_random_field(config))
+        with timers.stage("force_bias") as s:
+            force_bias = -2j * self._sqrt_tau * self._force_bias(theta)
+            force_bias = config.backend.where(abs(force_bias) > 1, 0.0, force_bias)
+            arg = s.done(contract("gw, gw -> w", random_field - 0.5 * force_bias, force_bias))
+        with timers.stage("aux_matrix") as s:
+            field = s.done(1j * self._sqrt_tau * self._auxiliary_field(random_field - force_bias))
         return field, config.backend.exp(arg)
 
     @property
@@ -935,16 +964,21 @@ def project_trial(backend, trial, slater_det):
     return backend.linalg.det(trial.T @ slater_det) ** 2
 
 
-def measure_energy(config, trial, walkers, hamiltonian):
-    th = biorthogonalize(config.backend, trial, walkers.slater_det)
-    e1 = hamiltonian.compute_one_body(th)
-    eh = hamiltonian.compute_hartree(th)
-    ex = hamiltonian.compute_exchange(th)
+def measure_energy(config, trial, walkers, hamiltonian, timers=NULL_TIMERS):
+    with timers.stage("biorthogonalize") as s:
+        th = s.done(biorthogonalize(config.backend, trial, walkers.slater_det))
+    with timers.stage("one_body") as s:
+        e1 = s.done(hamiltonian.compute_one_body(th))
+    with timers.stage("hartree") as s:
+        eh = s.done(hamiltonian.compute_hartree(th))
+    with timers.stage("exchange") as s:
+        ex = s.done(hamiltonian.compute_exchange(th))
     energy = e1 + (eh + ex) / config.num_kpoint
     weighted_energy = energy @ walkers.weights
     sum_weights = config.backend.sum(walkers.weights)
-    weighted_energy_global = config.comm.allreduce(weighted_energy)
-    sum_weights_global = config.comm.allreduce(sum_weights)
+    with timers.stage("allreduce"):
+        weighted_energy_global = config.comm.allreduce(weighted_energy)
+        sum_weights_global = config.comm.allreduce(sum_weights)
     return (
         weighted_energy_global / sum_weights_global,
         weighted_energy_global,
@@ -983,12 +1017,12 @@ def apply_taylor(config, matrix, slater_det):
     result = slater_det.copy()
     addend = slater_det
     for i in range(config.order_propagation):
-        addend = contract("pqw, wqi -> wpi", matrix, addend) / (i + 1)
+        addend = (matrix @ addend) / (i + 1)                      # matrix (w, p, q), walkers (w, q, i)
         result += addend
     return result
 
 
-def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0):
+def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0, timers=NULL_TIMERS):
     """One imaginary-time step of all walkers.
 
     h_0 = exp(dtau * H_zero) — scalar applied to the new walker determinant.
@@ -998,34 +1032,44 @@ def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0):
         config.backend.zeros_like(walkers.slater_det),
         config.backend.zeros_like(walkers.weights),
     )
-    th = biorthogonalize(config.backend, trial, walkers.slater_det)
-    h2, importance = hamiltonian.create_auxiliary_field(config, th)
+    T = timers
+    with T.stage("biorthogonalize") as s:
+        th = s.done(biorthogonalize(config.backend, trial, walkers.slater_det))
+    with T.stage("aux_field") as s:
+        h2, importance = s.done(hamiltonian.create_auxiliary_field(config, th, T))
     num_rare_event = 0
 
     if config.propagator == "Taylor":
         h = hamiltonian.h1 + h2
-        full = apply_taylor(config, h, walkers.slater_det)
+        with T.stage("taylor") as s:
+            full = s.done(apply_taylor(config, h, walkers.slater_det))
         new_walkers.slater_det = h_0 * full
     elif config.propagator == "S1":
-        full_h2 = apply_taylor(config, h2, walkers.slater_det)
-        full_h1 = hamiltonian.exp_h1 @ full_h2
+        with T.stage("taylor") as s:
+            full_h2 = s.done(apply_taylor(config, h2, walkers.slater_det))
+        with T.stage("exp_h1") as s:
+            full_h1 = s.done(hamiltonian.exp_h1 @ full_h2)
         new_walkers.slater_det = h_0 * full_h1
     elif config.propagator == "S2":
-        half = hamiltonian.exp_h1_half @ walkers.slater_det
-        full_h2 = apply_taylor(config, h2, half)
-        half = hamiltonian.exp_h1_half @ full_h2
+        with T.stage("exp_h1") as s:
+            half = s.done(hamiltonian.exp_h1_half @ walkers.slater_det)
+        with T.stage("taylor") as s:
+            full_h2 = s.done(apply_taylor(config, h2, half))
+        with T.stage("exp_h1") as s:
+            half = s.done(hamiltonian.exp_h1_half @ full_h2)
         new_walkers.slater_det = h_0 * half
     else:
         raise ValueError(f"Unknown propagator '{config.propagator}'")
 
-    new_overlap = project_trial(config.backend, trial, new_walkers.slater_det)
-    old_overlap = project_trial(config.backend, trial, walkers.slater_det)
-    overlap_ratio = new_overlap / old_overlap
-    cos_alpha = config.backend.cos(config.backend.angle(overlap_ratio))
-    factor = abs(overlap_ratio * importance * config.backend.exp(config.timestep * e_0))
-    factor = config.backend.where(factor < 10, factor, 0)
-    num_rare_event += int(config.backend.sum(factor == 0))
-    new_walkers.weights = abs(factor) * config.backend.maximum(0, cos_alpha) * walkers.weights
+    with T.stage("overlap_weights"):
+        new_overlap = project_trial(config.backend, trial, new_walkers.slater_det)
+        old_overlap = project_trial(config.backend, trial, walkers.slater_det)
+        overlap_ratio = new_overlap / old_overlap
+        cos_alpha = config.backend.cos(config.backend.angle(overlap_ratio))
+        factor = abs(overlap_ratio * importance * config.backend.exp(config.timestep * e_0))
+        factor = config.backend.where(factor < 10, factor, 0)
+        num_rare_event += int(config.backend.sum(factor == 0))
+        new_walkers.weights = abs(factor) * config.backend.maximum(0, cos_alpha) * walkers.weights
     return new_walkers, num_rare_event
 
 
@@ -1116,6 +1160,28 @@ def rebalance_comb(config, weights):
     return new_indices.astype(np.int64)
 
 
+def comb_instances(config, weights):
+    """Comb resampling of all walkers: number of copies of every walker (float64 bookkeeping; one uniform number of
+    the backend, the same as in every earlier version of the global rebalance)."""
+    total_n = len(weights)
+    norm_w = weights * (total_n / np.sum(weights))
+    bias = -float(config.backend.random_uniform_scalar())
+    # running sum bias + w_0 + w_1 + ... in the same order of additions as a loop (identical rounding)
+    cum = np.cumsum(np.concatenate(([bias], norm_w)))[1:]
+    cur = np.ceil(cum).astype(int)
+    return np.diff(cur, prepend=0)
+
+
+def resample_indices_single(config, walkers_weights):
+    """Population control of a run with one MPI process: the same comb as rebalance_global, but only the weights go
+    to the host; the caller reorders the walkers on their device with the returned indices (walkers[idx]), so no
+    walker is copied to the host and back. Gives exactly the walkers of rebalance_global with one rank."""
+    w = np.ascontiguousarray(np.asarray(config.backend.to_numpy(walkers_weights)).real, dtype=np.float64)
+    idx = np.repeat(np.arange(len(w)), comb_instances(config, w))
+    assert len(idx) == len(w)
+    return idx
+
+
 def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
     """Global rebalance across MPI ranks.
 
@@ -1132,19 +1198,7 @@ def rebalance_global(comm, walkers_mats_up, walkers_weights, config):
     all_weights = np.empty(total_n, dtype=np.float64) if rank == 0 else None
     comm.Gather(local_weights, all_weights, root=0)
 
-    instances = None
-    if rank == 0:
-        norm = total_n / np.sum(all_weights)
-        norm_w = all_weights * norm
-        bias = -float(config.backend.random_uniform_scalar())
-        instances = np.zeros(total_n, dtype=int)
-        cum = bias
-        prev = 0
-        for i in range(total_n):
-            cum += norm_w[i]
-            cur = int(np.ceil(cum))
-            instances[i] = cur - prev
-            prev = cur
+    instances = comb_instances(config, all_weights) if rank == 0 else None
 
     if rank != 0:
         instances = np.empty(total_n, dtype=int)

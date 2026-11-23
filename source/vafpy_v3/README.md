@@ -69,6 +69,25 @@ because the walkers are dense in the combined band-k basis.
 On a JAX backend the kernels are compiled with `jit`; single precision stays `complex64`/`float32`.
 `benchmark_kernels.py` reports per-kernel time and memory.
 
+## Random numbers
+
+`SEED` in `vafpy.in` is one seed for the whole run: an integer, or `random` (also when `SEED` is missing), in which
+case rank 0 draws 63 bits from the operating system and broadcasts them. The seed is printed at the top of the output
+and written to `outcar.txt`; setting `SEED` to that value repeats the run exactly (with the same number of ranks).
+Rank r uses the child stream r of `numpy.random.SeedSequence(seed)` (`functions.seed_sequence`): PCG64 for NumPy, a
+threefry key from that child for JAX. Runs that should be statistically independent need different seeds.
+
+## Timing report
+
+`TIMING` in `vafpy.in` (default 1) writes `timing.txt` at the end of the run (rank 0) and a short summary to
+`outcar.txt`: the code version, the run settings, the MPI library, ranks and nodes, the CPUs each rank is bound to,
+the thread variables (OMP/MKL/OPENBLAS), BLAS, JAX device and device memory, the peak memory per rank, the time of
+every part (maximum, mean and minimum over the ranks) and floating-point rates estimated from the matrix sizes
+(`timing.py`, compact layout). `TIMING : 0` switches it off; `TIMING : 1` times the parts of the run (set-up,
+propagation, energy, re-orthogonalisation, population control, output, analysis; below 2 % extra time);
+`TIMING : 2` also times the stages inside the propagation and the energy, each waiting for the device (exact stage
+times; with JAX up to about 20 % slower, so for profiling runs only). The energies do not depend on `TIMING`.
+
 ## Tests
 
 ```bash

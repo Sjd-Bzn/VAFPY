@@ -70,3 +70,17 @@ def test_reortho_methods_on_jax_backend():
     assert np.abs(p(q_np) - p(q_qr)).max() < 1e-4
     with pytest.raises(ValueError):
         new.reortho_qr(cj, Aj, "bogus")
+
+
+def test_jax_double_keeps_complex128():
+    """PRECSION = Double on JAX enables 64-bit types (complex128 stays complex128); Single leaves JAX at complex64.
+    In a subprocess, since jax_enable_x64 is a process-wide setting."""
+    import subprocess
+    code = ("import sys, numpy as np; sys.path.insert(0, sys.argv[1]); import functions as new; "
+            "b = new.make_backend('jax', 1, sys.argv[2]); "
+            "print(b.array(np.ones(2, np.complex128)).dtype, b.zeros((2,), dtype=b.cdouble).dtype)")
+    for precision, expected in (("Double", "complex128 complex128"), ("Single", "complex64 complex64")):
+        out = subprocess.run([sys.executable, "-c", code, os.path.dirname(os.path.abspath(__file__)), precision],
+                             capture_output=True, text=True, timeout=120, env={**os.environ, "JAX_PLATFORMS": "cpu"})
+        assert out.returncode == 0, out.stderr
+        assert out.stdout.split() == expected.split(), (precision, out.stdout)
