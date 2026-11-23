@@ -190,7 +190,7 @@ def main():
                     # one process: nothing to exchange; only the weights go to the host, the walkers of both spins are
                     # reordered on their device (same walkers as the global path with one rank)
                     idx = config.backend.asarray(new.resample_indices_single(config, walkers.weights))
-                    walkers.dets = [d[idx] for d in walkers.dets]
+                    walkers.take(idx)
                     walkers.weights = config.backend.ones(NUM_WALKERS, dtype=config.complex_type)
                 elif afqmc.REBAL_METHOD == "global":
                     # the spin channels travel together: their columns are joined for the exchange between ranks
@@ -205,7 +205,7 @@ def main():
                     walkers.weights    = config.backend.array(wts_np,  dtype=config.complex_type)
                 else:
                     idx = new.rebalance_comb(config, walkers.weights)
-                    walkers.dets = [d[idx] for d in walkers.dets]
+                    walkers.take(idx)
                     walkers.weights = new.init_walkers_weights(config, NUM_WALKERS)
                 s.done((walkers.dets, walkers.weights))
 
@@ -245,11 +245,19 @@ def main():
         if layout == "compact" or config.spin_polarized:   # spin runs use the compact Hamiltonian for any input;
             # summed over the spin channels, each with its own number of electrons
             nes = [afqmc.num_electrons_up] + ([afqmc.num_electrons_down] if len(config.channels) == 2 else [])
+            # fractions of the calls in which theta or P, Q were computed instead of taken from an earlier part
+            ncalls = lambda path: timers.data.get(path, [0, 0.0])[0]  # noqa: E731
+            fractions = dict(force_bias_pq=getattr(hamiltonian, "force_bias_pq_evaluations", afqmc.NUM_STEPS) / max(afqmc.NUM_STEPS, 1),
+                             refresh=ncalls("propagate/refresh") / max(ncalls("propagate"), 1),
+                             energy_biorth=ncalls("energy/biorthogonalize") / max(ncalls("energy"), 1))
             for ne_c in nes:
                 c = timing.operation_counts(config.num_kpoint, config.num_orbital, ne_c, config.num_g,
                                             hamiltonian._nmax, config.num_walkers, config.order_propagation,
-                                            config.propagator)
+                                            config.propagator, **fractions)
                 counts = c if counts is None else {k: counts[k] + c[k] for k in c}
+            # exp_h1 and taylor are timed once per channel: per call, the mean of the channels
+            for key in ("propagate/exp_h1", "propagate/taylor"):
+                counts[key] /= len(nes)
         lines = timing.write_report(timers, config.comm, "timing.txt", settings, counts,
                                     code_dir=os.path.dirname(os.path.abspath(__file__)), n_steps=afqmc.NUM_STEPS)
         if afqmc.first_cpu:

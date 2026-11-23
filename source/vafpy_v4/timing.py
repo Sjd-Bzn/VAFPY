@@ -95,27 +95,31 @@ def jax_sync(x):
 # ---------------------------------------------------------------------------------------------------------------------
 #  operation counts (complex multiply-adds per call, for all walkers of one rank; compact H2 layout)
 # ---------------------------------------------------------------------------------------------------------------------
-def operation_counts(nk, nb, ne, ng, nmax, nw, order, propagator="S2", nspin=1):
-    """nspin = 2 (spin-unrestricted): every count is done once per spin channel; exp_h1 and taylor are
-    called once per channel, so their count per call is that of one channel."""
+def operation_counts(nk, nb, ne, ng, nmax, nw, order, propagator="S2", nspin=1, force_bias_pq=1.0, refresh=0.0,
+                     energy_biorth=0.0):
+    """Counts for one spin channel (nspin = 2: both channels with the same ne). exp_h1 and taylor are called once
+    per channel, so their count per call is that of one channel.
+    theta and the overlap of the walkers are formed once per step (propagate/biorthogonalize, one LU of T^T Psi) and
+    kept; the other parts that need them compute them only when they are not kept: the fractions of the calls are
+    force_bias_pq (force bias with its own P, Q; otherwise those of the Hartree energy), refresh (per propagation
+    step) and energy_biorth (per energy evaluation)."""
     nbk, nek = nk * nb, nk * ne
-    biorth = nw * (2 * nbk * nek ** 2 + nek ** 3)                 # trial^T Psi, inverse, Psi (trial^T Psi)^-1
+    biorth = nw * (2 * nbk * nek ** 2 + 4.0 / 3.0 * nek ** 3)     # trial^T Psi, LU, inverse, Psi (trial^T Psi)^-1
     pq = nw * 2 * nk * nk * nmax * nb * ne                         # P and Q: batched products over q
     aux = nw * 2 * nk * nk * nb * nb * nmax                        # sum_g L u and sum_g conj(L) v
     taylor = nw * order * nbk * nbk * nek                          # field (nbk x nbk) times walker, per order
     h1 = nw * nbk * nbk * nek                                     # one exp(-dtau H1/2) (S2: two calls per step)
-    proj = nw * 2 * (nek * nek * nbk + nek ** 3 / 3.0)             # two overlaps: product and determinant
     exch = nw * nk ** 3 * (nb * ne) ** 2                           # Gram form of the exchange
     one = nw * nbk * nek
     chol = nw * (2 * nbk * nek ** 2 + 4.0 / 3.0 * nek ** 3)
     qr = nw * (4 * nbk * nek ** 2 - 4.0 / 3.0 * nek ** 3)
     c = {
+        "propagate/refresh": biorth,
         "propagate/biorthogonalize": biorth,
-        "propagate/aux_field/force_bias": pq,
+        "propagate/aux_field/force_bias": force_bias_pq * pq,
         "propagate/aux_field/aux_matrix": aux,
         "propagate/exp_h1": h1,
         "propagate/taylor": taylor,
-        "propagate/overlap_weights": proj,
         "energy/biorthogonalize": biorth,
         "energy/one_body": one,
         "energy/hartree": pq,
@@ -123,9 +127,10 @@ def operation_counts(nk, nb, ne, ng, nmax, nw, order, propagator="S2", nspin=1):
         "reortho:Cholesky": chol,
         "reortho:QR": qr,
     }
-    c["propagate/aux_field"] = pq + aux
-    c["propagate"] = biorth + pq + aux + (2 if propagator == "S2" else 1) * h1 + taylor + proj
-    c["energy"] = biorth + one + pq + exch
+    c["propagate/aux_field"] = force_bias_pq * pq + aux
+    c["propagate"] = ((1 + refresh) * biorth + force_bias_pq * pq + aux + (2 if propagator == "S2" else 1) * h1
+                      + taylor)
+    c["energy"] = energy_biorth * biorth + one + pq + exch
     c = {k: nspin * v for k, v in c.items()}
     # exp_h1 and taylor are timed once per spin channel: their count per call stays that of one channel
     c["propagate/exp_h1"], c["propagate/taylor"] = h1, taylor

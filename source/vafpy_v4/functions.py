@@ -342,6 +342,10 @@ class Walkers:
     slater_det: object                # closed shell: the determinant of both spins; spin-unrestricted: spin up
     weights: object
     slater_det_dn: object = None      # spin-unrestricted only: spin down
+    # quantities of the present determinants, kept from the step that formed them (None: not known, recomputed):
+    theta: object = None              # list per channel, Phi (T^T Phi)^-1; unchanged by Phi -> Phi R (re-orthogonalisation)
+    overlap: object = None            # <Psi_T|Phi> = prod over the channels of det(T^T Phi)^mult
+    pq: object = None                 # compact H2: list per channel of (P, Q) of theta, from the Hartree energy
 
     @property
     def dets(self):
@@ -352,6 +356,21 @@ class Walkers:
     def dets(self, dets):
         self.slater_det = dets[0]
         self.slater_det_dn = dets[1] if len(dets) > 1 else None
+
+    def __setattr__(self, name, value):
+        """New determinants (assigned in any way): the kept theta, overlap and pq no longer belong to them."""
+        object.__setattr__(self, name, value)
+        if name in ("slater_det", "slater_det_dn"):
+            for kept in ("theta", "overlap", "pq"):
+                object.__setattr__(self, kept, None)
+
+    def take(self, idx):
+        """Walkers idx (population control on one rank): the determinants and everything kept for them."""
+        theta, overlap, pq = self.theta, self.overlap, self.pq
+        self.dets = [d[idx] for d in self.dets]
+        self.theta = None if theta is None else [t[idx] for t in theta]
+        self.overlap = None if overlap is None else overlap[idx]
+        self.pq = None if pq is None else [(p[:, idx], q[:, idx]) for p, q in pq]
 
 
 def as_list(x):
@@ -473,7 +492,7 @@ class Hamiltonian:
             )
         return self.test_random_field
 
-    def create_auxiliary_field(self, config, theta, timers=NULL_TIMERS):
+    def create_auxiliary_field(self, config, theta, timers=NULL_TIMERS, pqs=None):
         random_field = self.create_random_field(config)
         force_bias = -2j * self._sqrt_tau * self._force_bias_expression(theta)
         # boundary condition for rare events
@@ -546,6 +565,10 @@ def make_compact_kernels(be, nk, nb, ne, nmax, ng, kmap, sizes, has_mf, jit=Fals
 
     def force_bias(M, c, cc, theta):
         P, Q = pq(M, theta)
+        return force_bias_pq(P, Q, c, cc, theta)
+
+    def force_bias_pq(P, Q, c, cc, theta):
+        """Force bias from P, Q of theta (already known from the Hartree energy of the same walkers)."""
         if has_mf:
             S = theta[:, occ_rows, ar_nek].sum(axis=1)                      # sum_i theta[(i_occ), i]
             P = P - c * S[None, :]
@@ -587,7 +610,8 @@ def make_compact_kernels(be, nk, nb, ne, nmax, ng, kmap, sizes, has_mf, jit=Fals
             total = total + (X * th2).sum(axis=(0, 2))
         return total
 
-    fns = {"pq": pq, "force_bias": force_bias, "hartree": hartree, "aux": aux, "exchange": exchange}
+    fns = {"pq": pq, "force_bias": force_bias, "force_bias_pq": force_bias_pq, "hartree": hartree, "aux": aux,
+           "exchange": exchange}
     if jit:
         fns = {k: be._jax.jit(f) for k, f in fns.items()}
     return fns
@@ -626,6 +650,7 @@ class HamiltonianCompact:
     exchange_mode: str = "gram"     # 'gram' (per-sector Gram of the occupied blocks) or 'direct' (sum over g, reference)
     one_body_dn: object = None      # spin-unrestricted only
     two_body_dn: object = None
+    force_bias_pq_evaluations: int = 0   # force biases for which P, Q were computed (not taken from the energy)
 
     # ------------------------------------------------------------------
     def setup_energy_expressions(self, config, trial_det):
@@ -774,11 +799,14 @@ class HamiltonianCompact:
     def compute_hartree(self, theta):
         """E_H = 1/2 sum_g rho_g rho_g^+ with rho = sum over the spins of P (and Q for rho^+); closed shell 2 sum P Q.
         Same two contractions as the force bias (raw L, no extra tensor)."""
-        P, Q = 0, 0
-        for ch, th in self._pairs(theta):
-            p, q = ch.k["pq"](ch.M, th)
-            P, Q = P + ch.mult * p, Q + ch.mult * q
-        return 0.5 * (P * Q).sum(axis=0)
+        return self.hartree_and_pq(theta)[0]
+
+    def hartree_and_pq(self, theta):
+        """Hartree energy and the (P, Q) of every channel, which the force bias of the next step uses again."""
+        pqs = [ch.k["pq"](ch.M, th) for ch, th in self._pairs(theta)]
+        P = sum(ch.mult * p for ch, (p, _) in zip(self._chans, pqs))
+        Q = sum(ch.mult * q for ch, (_, q) in zip(self._chans, pqs))
+        return 0.5 * (P * Q).sum(axis=0), pqs
 
     def compute_exchange(self, theta):
         """Exchange acts within each spin: E_x = -1/2 sum_sigma X_sigma (closed shell -X)."""
@@ -830,13 +858,19 @@ class HamiltonianCompact:
             P, Q = P + (0.5 * ch.mult) * p, Q + (0.5 * ch.mult) * q
         return P, Q
 
-    def _force_bias(self, theta):
+    def _force_bias(self, theta, pqs=None):
         """(2*ng, nw): [ (P+Q)/2 ; i(P-Q)/2 ] / sqrt(nk) for the mean-field subtracted L, summed over the spins
         with weight mult/2 (closed shell: the value of one spin, the factor 2 of the two spins is in the -2j of
-        create_auxiliary_field)."""
+        create_auxiliary_field). pqs: (P, Q) of every channel of this theta, if already known."""
+        if pqs is None:
+            self.force_bias_pq_evaluations += 1
         fb = 0
-        for ch, th in self._pairs(theta):
-            fb = fb + (0.5 * ch.mult) * ch.k["force_bias"](ch.M, self._c, self._c_conj, th)
+        for i, (ch, th) in enumerate(self._pairs(theta)):
+            if pqs is None:
+                f = ch.k["force_bias"](ch.M, self._c, self._c_conj, th)
+            else:
+                f = ch.k["force_bias_pq"](*pqs[i], self._c, self._c_conj, th)
+            fb = fb + (0.5 * ch.mult) * f
         return fb
 
     def _auxiliary_field(self, x):
@@ -845,11 +879,11 @@ class HamiltonianCompact:
         dense L_g is formed. The same field x acts on both spins."""
         return unlist([ch.k["aux"](ch.M, self._c, self._c_conj, self._eye, x) for ch in self._chans])
 
-    def create_auxiliary_field(self, config, theta, timers=NULL_TIMERS):
+    def create_auxiliary_field(self, config, theta, timers=NULL_TIMERS, pqs=None):
         with timers.stage("random_field") as s:
             random_field = s.done(self.create_random_field(config))
         with timers.stage("force_bias") as s:
-            force_bias = -2j * self._sqrt_tau * self._force_bias(theta)
+            force_bias = -2j * self._sqrt_tau * self._force_bias(theta, pqs)
             force_bias = config.backend.where(abs(force_bias) > 1, 0.0, force_bias)
             arg = s.done(contract("gw, gw -> w", random_field - 0.5 * force_bias, force_bias))
         x = random_field - force_bias
@@ -1079,6 +1113,50 @@ def project_trial(backend, trial, slater_det):
     return backend.linalg.det(trial.T @ slater_det) ** 2
 
 
+def _theta_det_jax(trial, slater_det):
+    """theta = Phi S^-1 and det S, S = T^T Phi, from one LU factorisation of S (JAX, batched over the walkers)."""
+    import jax
+    import jax.numpy as jnp
+    s = trial.T @ slater_det
+    lu, piv, _ = jax.lax.linalg.lu(s)
+    n = s.shape[-1]
+    swaps = jnp.sum(piv != jnp.arange(n, dtype=piv.dtype), axis=-1)
+    det = jnp.prod(jnp.diagonal(lu, axis1=-2, axis2=-1), axis=-1) * (1 - 2 * (swaps % 2)).astype(s.dtype)
+    inverse = jax.scipy.linalg.lu_solve((lu, piv), jnp.broadcast_to(jnp.eye(n, dtype=s.dtype), s.shape))
+    return slater_det @ inverse, det
+
+
+_theta_det_jax_jit = None
+
+
+def theta_det(backend, trial, slater_det):
+    """theta = Phi (T^T Phi)^-1 and det(T^T Phi) of one spin channel; on JAX both from one LU factorisation."""
+    global _theta_det_jax_jit
+    if isinstance(backend, JaxBackend):
+        if _theta_det_jax_jit is None:
+            _theta_det_jax_jit = backend._jax.jit(_theta_det_jax)
+        return _theta_det_jax_jit(trial, slater_det)
+    s = trial.T @ slater_det
+    return slater_det @ backend.linalg.inv(s), backend.linalg.det(s)
+
+
+def thetas_and_overlap(config, trial, dets):
+    """theta of every spin channel (list) and <Psi_T|Phi> = prod over the channels of det(T^T Phi)^mult."""
+    thetas, overlap = [], 1
+    for t, d, (_, mult) in zip(as_list(trial), dets, config.channels):
+        th, det = theta_det(config.backend, t, d)
+        thetas.append(th)
+        overlap = overlap * det ** mult
+    return thetas, overlap
+
+
+def ensure_thetas(config, trial, walkers):
+    """theta and overlap of the walkers: kept from the step that formed them, computed only if unknown."""
+    if walkers.theta is None or walkers.overlap is None:
+        walkers.theta, walkers.overlap = thetas_and_overlap(config, trial, walkers.dets)
+    return unlist(walkers.theta)
+
+
 def walker_thetas(config, trial, walkers):
     """theta of every spin channel (a bare array for a closed shell)."""
     return unlist([biorthogonalize(config.backend, t, d) for t, d in zip(as_list(trial), walkers.dets)])
@@ -1096,17 +1174,33 @@ def overlap_trial(config, trial, dets):
 
 
 def reortho_walkers(config, walkers, method="Auto"):
-    """Re-orthogonalise the determinant of every spin channel separately."""
-    walkers.dets = [reortho_qr(config, d, method) for d in walkers.dets]
+    """Re-orthogonalise the determinant of every spin channel separately: Phi -> Phi R^-1. theta and pq do not
+    change; the kept overlap is divided by prod over the channels of det(R)^mult."""
+    theta, overlap, pq = walkers.theta, walkers.overlap, walkers.pq
+    out = [reortho_with_det(config, d, method) for d in walkers.dets]
+    walkers.dets = [q for q, _ in out]
+    walkers.theta, walkers.pq = theta, pq
+    if overlap is not None:
+        for (_, det_r), (_, mult) in zip(out, config.channels):
+            overlap = overlap / det_r ** mult
+        walkers.overlap = overlap
 
 
 def measure_energy(config, trial, walkers, hamiltonian, timers=NULL_TIMERS):
-    with timers.stage("biorthogonalize") as s:
-        th = s.done(walker_thetas(config, trial, walkers))
+    """Local energy. theta (and the overlap) of the walkers are kept from their propagation step and computed here
+    only if unknown; on the compact H2 the P, Q of the Hartree energy are kept for the force bias of the next step."""
+    if walkers.theta is None or walkers.overlap is None:
+        with timers.stage("biorthogonalize") as s:
+            s.done(ensure_thetas(config, trial, walkers))
+    th = unlist(walkers.theta)
     with timers.stage("one_body") as s:
         e1 = s.done(hamiltonian.compute_one_body(th))
     with timers.stage("hartree") as s:
-        eh = s.done(hamiltonian.compute_hartree(th))
+        if hasattr(hamiltonian, "hartree_and_pq"):
+            eh, walkers.pq = hamiltonian.hartree_and_pq(th)
+            s.done(eh)
+        else:
+            eh = s.done(hamiltonian.compute_hartree(th))
     with timers.stage("exchange") as s:
         ex = s.done(hamiltonian.compute_exchange(th))
     energy = e1 + (eh + ex) / config.num_kpoint
@@ -1168,10 +1262,12 @@ def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0, timers=NULL
     """
     T = timers
     dets = walkers.dets
-    with T.stage("biorthogonalize") as s:
-        th = s.done(walker_thetas(config, trial, walkers))
+    if walkers.theta is None or walkers.overlap is None:      # not kept (first step, after a global rebalance)
+        with T.stage("refresh") as s:
+            s.done(ensure_thetas(config, trial, walkers))
+    th = unlist(walkers.theta)
     with T.stage("aux_field") as s:
-        h2, importance = s.done(hamiltonian.create_auxiliary_field(config, th, T))
+        h2, importance = s.done(hamiltonian.create_auxiliary_field(config, th, T, pqs=walkers.pq))
     num_rare_event = 0
     fields = as_list(h2)
     if config.propagator == "Taylor":
@@ -1205,10 +1301,11 @@ def propagate_walkers(config, trial, walkers, hamiltonian, h_0, e_0, timers=NULL
 
     new_walkers = Walkers(new_dets[0], config.backend.zeros_like(walkers.weights))
     new_walkers.dets = new_dets
+    # theta and overlap of the new walkers, kept for the energy, the next step and the overlap ratio below
+    with T.stage("biorthogonalize") as s:
+        new_walkers.theta, new_walkers.overlap = s.done(thetas_and_overlap(config, trial, new_dets))
     with T.stage("overlap_weights"):
-        new_overlap = overlap_trial(config, trial, new_dets)
-        old_overlap = overlap_trial(config, trial, dets)
-        overlap_ratio = new_overlap / old_overlap
+        overlap_ratio = new_walkers.overlap / walkers.overlap
         cos_alpha = config.backend.cos(config.backend.angle(overlap_ratio))
         factor = abs(overlap_ratio * importance * config.backend.exp(config.timestep * e_0))
         factor = config.backend.where(factor < 10, factor, 0)
@@ -1249,6 +1346,43 @@ def cholesky_orthonormalize(backend, walkers):
     lh = backend.swapaxes(backend.linalg.cholesky(gram).conj(), -1, -2)
     eye = backend.broadcast_to(backend.eye(lh.shape[-1], dtype=walkers.dtype), lh.shape)
     return walkers @ backend.linalg.solve(lh, eye)
+
+
+def _cholesky_det_jax(walkers):
+    """Q = A (L^H)^-1 with A^H A = L L^H and det(L^H) = prod diag L (real, positive), batched (JAX)."""
+    import jax
+    import jax.numpy as jnp
+    lower = jnp.linalg.cholesky(jnp.swapaxes(walkers.conj(), -1, -2) @ walkers)
+    lh = jnp.swapaxes(lower.conj(), -1, -2)
+    eye = jnp.broadcast_to(jnp.eye(lh.shape[-1], dtype=walkers.dtype), lh.shape)
+    q = walkers @ jnp.linalg.solve(lh, eye)                # as cholesky_orthonormalize_complex_jax
+    return q, jnp.prod(jnp.diagonal(lower, axis1=-2, axis2=-1), axis=-1)
+
+
+_cholesky_det_jax_jit = None
+
+
+def reortho_with_det(config, walker_matrix, method="Auto"):
+    """Re-orthogonalised walkers Q = A R^-1 and det(R) of every walker, so that det(T^T Q) = det(T^T A) / det(R).
+    Cholesky: R = L^H of A^H A = L L^H; QR: A = Q R."""
+    global _cholesky_det_jax_jit
+    be = config.backend
+    if method == "Auto":
+        method = "Cholesky" if isinstance(be, JaxBackend) else "QR"
+    if method == "Cholesky":
+        if isinstance(be, JaxBackend):
+            if _cholesky_det_jax_jit is None:
+                _cholesky_det_jax_jit = be._jax.jit(_cholesky_det_jax)
+            return _cholesky_det_jax_jit(walker_matrix)
+        gram = be.swapaxes(walker_matrix.conj(), -1, -2) @ walker_matrix
+        lower = be.linalg.cholesky(gram)
+        lh = be.swapaxes(lower.conj(), -1, -2)
+        eye = be.broadcast_to(be.eye(lh.shape[-1], dtype=walker_matrix.dtype), lh.shape)
+        return walker_matrix @ be.linalg.solve(lh, eye), be.prod(be.diagonal(lower, axis1=-2, axis2=-1), axis=-1)
+    if method != "QR":
+        raise ValueError(f"unknown reorthogonalisation method {method!r} (QR, Cholesky or Auto)")
+    q, r = be.qr(walker_matrix)
+    return q, be.prod(be.diagonal(r, axis1=-2, axis2=-1), axis=-1)
 
 
 def reortho_qr(config, walker_matrix, method="Auto"):
