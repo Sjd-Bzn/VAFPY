@@ -1,6 +1,7 @@
 """Test C reference: AFQMC energy at fixed lam (H1 -> H1 + lam V, V = H1), one long run per process, no derivative.
 d<E>/dlam of the converged projection = (E(+lam) - E(-lam)) / 2 lam from independent runs.
-usage: run_lambda.py SEED LAM NW N_BLOCKS BLOCK OUT.npz
+usage: run_lambda.py SEED LAM NW N_BLOCKS BLOCK OUT.npz [PART]
+PART = h1 (default): H1 -> (1 + lam) H1;  PART = h2: L -> (1 + lam/2) L, i.e. H2 scaled (slope at lam = 0 is E2).
 """
 import os, sys, time
 import numpy as np
@@ -15,6 +16,7 @@ from test_compact_hamiltonian import make_config
 from test_autodiff_forces import GAMMA as P
 
 seed, lam, nw, nblk, block, out = int(sys.argv[1]), float(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), sys.argv[6]
+part = sys.argv[7] if len(sys.argv) > 7 else "h1"
 config = make_config(nw, precision="Double", backend=new.JaxBackend(seed), nk=1, nb=16, ne=4, ng=136)
 q = new.obtain_Q_list(config, os.path.join(P, "Q_list.npy"))
 h1 = new.obtain_H1(config, os.path.join(P, "H1_svd.npy"))
@@ -23,7 +25,11 @@ sizes = new.obtain_Q_sizes(config, os.path.join(P, "Q_sizes.npy"))
 H = new.build_hamiltonian(config, h1, h2c, "compact", q, sizes)
 trial, walkers = new.initialize_determinant(config)
 H.setup_energy_expressions(config, trial)
-model = af.Model(config, H, trial, V=np.asarray(h1))
+if part == "h2":
+    L = np.asarray(h2c)
+    model = af.Model(config, H, trial, V=np.zeros_like(np.asarray(h1)), L=L, dL=0.5 * L)
+else:
+    model = af.Model(config, H, trial, V=np.asarray(h1))
 key = jax.random.PRNGKey(seed)
 d = jnp.asarray(walkers.slater_det, dtype=model.ctype)
 w = jnp.ones(nw, dtype=model.ctype)

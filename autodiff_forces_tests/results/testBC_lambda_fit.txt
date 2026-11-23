@@ -1,0 +1,37 @@
+=== $H_1$ scaled (/data/sajad/calcs/autodiff_forces/testBC_lambda_scan)
+  lam    AFQMC              FCI          AFQMC - FCI
+  -0.30     76.1913(273)     75.89849   +0.2929(273)
+  -0.20     86.9164(240)     86.71151   +0.2049(240)
+  -0.10     97.4797(262)     97.37213   +0.1076(262)
+  +0.00    107.9985(200)    107.91823   +0.0802(200)
+  +0.10    118.4214(181)    118.37593   +0.0455(181)
+  +0.20    128.7736(159)    128.76390   +0.0097(159)
+  +0.30    139.1168(116)    139.09579   +0.0210(116)
+  polynomial degree 3: slope AFQMC 104.533(104)   FCI 104.9758
+  polynomial degree 4: slope AFQMC 104.539(108)   FCI 104.9758
+  AFQMC - FCI, cubic fit: slope at 0 = -0.453(104)
+  two-point h = 0.1: AFQMC 104.709(159)   FCI 105.0190
+  two-point h = 0.2: AFQMC 104.643(72)   FCI 105.1310
+  two-point h = 0.3: AFQMC 104.876(49)   FCI 105.3288
+  two-point h = 0.05: AFQMC 103.558(807) (earlier runs)   FCI 104.9918
+=== $H_2$ scaled (/data/sajad/calcs/autodiff_forces/testBC_lambda_scan_h2)
+  lam    AFQMC              FCI          AFQMC - FCI
+  -0.30    106.7515(122)    106.74747   +0.0040(122)
+  -0.20    107.2254(159)    107.19635   +0.0291(159)
+  -0.10    107.6163(179)    107.58955   +0.0268(179)
+  +0.00    107.9985(200)    107.91823   +0.0802(200)
+  +0.10    108.2616(207)    108.17383   +0.0878(207)
+  +0.20    108.5437(221)    108.34806   +0.1956(221)
+  +0.30    108.7517(244)    108.43295   +0.3187(244)
+  polynomial degree 3: slope AFQMC 3.242(96)   FCI 2.9354
+  polynomial degree 4: slope AFQMC 3.243(99)   FCI 2.9354
+  AFQMC - FCI, cubic fit: slope at 0 = +0.306(96)
+  two-point h = 0.1: AFQMC 3.227(137)   FCI 2.9214
+  two-point h = 0.2: AFQMC 3.296(68)   FCI 2.8793
+  two-point h = 0.3: AFQMC 3.334(45)   FCI 2.8091
+=== E1 + E2 (sum of the two scans)
+  two-point h = 0.1: AFQMC 107.935(210)   FCI 107.9404
+  two-point h = 0.2: AFQMC 107.939(99)   FCI 108.0102
+  two-point h = 0.3: AFQMC 108.209(67)   FCI 108.1380
+  fit degree 3: AFQMC 107.775(142)   FCI 107.9112
+  fit degree 4: AFQMC 107.782(147)   FCI 107.9112

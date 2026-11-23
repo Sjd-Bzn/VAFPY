@@ -1,0 +1,14 @@
+lam     E_AFQMC          E_FCI        AFQMC - FCI
+-0.30     76.1913(387)     75.89849   +0.293(39)
+-0.20     86.9164(225)     86.71151   +0.205(23)
+-0.10     97.4797(241)     97.37213   +0.108(24)
++0.00    107.9985(128)    107.91823   +0.080(13)
++0.10    118.4214(278)    118.37593   +0.045(28)
++0.20    128.7736( 40)    128.76390   +0.010( 4)
++0.30    139.1168(131)    139.09579   +0.021(13)
+central difference h = 0.1: AFQMC 104.709(184)   FCI 105.019
+central difference h = 0.2: AFQMC 104.643(57)   FCI 105.131
+central difference h = 0.3: AFQMC 104.876(68)   FCI 105.329
+polynomial fit degree 3: slope at 0  AFQMC 104.490(63)   FCI 104.976
+polynomial fit degree 4: slope at 0  AFQMC 104.523(99)   FCI 104.976
+FCI <Psi0|H1|Psi0> = 104.982744
