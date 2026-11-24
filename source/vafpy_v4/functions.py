@@ -1059,12 +1059,12 @@ def build_hamiltonian(config, one_body, h2_host, layout, q_list, q_sizes=None, o
     dense   -> Hamiltonian (reference path, dense (nb*nk, nb*nk, ng) tensor)
     compact -> HamiltonianCompact (momentum-conserving blocks only)
 
-    Spin-unrestricted runs (config.spin_polarized) always use HamiltonianCompact; a dense H2 (e.g. a Gamma-point
-    supercell, nk = 1) is converted to the compact layout. one_body_dn / h2_host_dn are the spin-down terms in the
-    same layout as the spin-up ones.
+    Spin-unrestricted runs (config.spin_polarized) and Gamma-point runs (nk = 1, where the two layouts have the
+    same shape) always use HamiltonianCompact; a dense H2 is converted to the compact layout. one_body_dn /
+    h2_host_dn are the spin-down terms in the same layout as the spin-up ones.
     """
-    if config.spin_polarized or layout == "compact":
-        kmap = build_kmap(q_list, config.num_kpoint)
+    if config.spin_polarized or layout == "compact" or config.num_kpoint == 1:
+        kmap = np.zeros((1, 1), dtype=np.int64) if config.num_kpoint == 1 else build_kmap(q_list, config.num_kpoint)
         if q_sizes is None:
             q_sizes = sector_sizes_default(config.num_g, config.num_kpoint)
         if layout != "compact":

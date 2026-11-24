@@ -164,12 +164,19 @@ def test_compact_layout_for_single_k_matches_dense():
     h1 = new.obtain_H1(config, os.path.join(SUPER, "H1_svd.npy"))
     dense = np.load(os.path.join(SUPER, "H2_zip.npy")).astype(np.complex128)       # (64, 64, ng)
     compact = np.ascontiguousarray(dense.transpose(1, 0, 2))                        # Lc[b2, b1, g]
-    Hd = new.build_hamiltonian(config, h1, dense, "dense", None)
+    Hd = new.Hamiltonian(one_body=h1, two_body=config.backend.array(dense, dtype=config.complex_type), q_list=None)
     Hc = new.HamiltonianCompact(one_body=h1, two_body=config.backend.array(compact, dtype=config.complex_type),
                                 kmap=np.zeros((1, 1), dtype=np.int64), sizes=np.array([ng]))
+    # the factory uses the compact Hamiltonian at Gamma, converted from the dense file
+    Hf = new.build_hamiltonian(config, h1, dense, "dense", np.ones((1, 3), dtype=np.int64))
+    assert type(Hf) is new.HamiltonianCompact
     trial, walkers = new.initialize_determinant(config)
     Hd.setup_energy_expressions(config, trial)
     Hc.setup_energy_expressions(config, trial)
+    Hf.setup_energy_expressions(config, trial)
+    th0 = new.biorthogonalize(config.backend, trial, walkers.slater_det)
+    assert rel(Hf.compute_exchange(th0), Hc.compute_exchange(th0)) < 1e-14
+    assert rel(Hf._force_bias(th0), Hc._force_bias(th0)) < 1e-14
     assert abs(Hd.H_zero - Hc.H_zero) < 1e-10 * abs(Hd.H_zero)
     assert rel(Hc.exp_h1_half, Hd.exp_h1_half) < 1e-11
     walkers = perturbed(config, walkers, amp=0.02)

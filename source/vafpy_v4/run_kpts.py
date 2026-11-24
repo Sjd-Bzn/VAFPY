@@ -235,14 +235,16 @@ def main():
                     ("spin", "unrestricted" if len(config.channels) == 2 else "closed shell"),
                     ("electrons per k (up, down)", f"{afqmc.num_electrons_up}, "
                      f"{afqmc.num_electrons_down if len(config.channels) == 2 else afqmc.num_electrons_up}"), ("NGVEC", afqmc.num_g),
-                    ("H2 layout", layout), ("walkers per rank", afqmc.NUM_WALKERS), ("walkers in total",
+                    ("H2 layout", f"{layout} (file), "
+                     f"{'compact' if isinstance(hamiltonian, new.HamiltonianCompact) else 'dense'} (Hamiltonian)"),
+                    ("walkers per rank", afqmc.NUM_WALKERS), ("walkers in total",
                     afqmc.NUM_WALKERS * config.comm.Get_size()), ("steps", afqmc.NUM_STEPS), ("DTAU", afqmc.D_TAU),
                     ("propagator", f"{afqmc.propagator}, Taylor order {afqmc.order_trunc}"),
                     ("reortho", f"{method} every {afqmc.REORTHO_PERIODICITY} steps"),
                     ("population control", f"{afqmc.REBAL_METHOD} every {afqmc.REBAL_PERIODICITY} steps"),
                     ("energy", f"every {afqmc.SAMP_FREQ} steps"), ("SEED", f"{seed} ({seed_source})")]
         counts = None
-        if layout == "compact" or config.spin_polarized:   # spin runs use the compact Hamiltonian for any input;
+        if isinstance(hamiltonian, new.HamiltonianCompact):   # spin and Gamma-point runs use it for any input;
             # summed over the spin channels, each with its own number of electrons
             nes = [afqmc.num_electrons_up] + ([afqmc.num_electrons_down] if len(config.channels) == 2 else [])
             # fractions of the calls in which theta or P, Q were computed instead of taken from an earlier part

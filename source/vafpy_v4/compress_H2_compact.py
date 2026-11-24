@@ -54,11 +54,20 @@ def sector_matrix(raw_q, num_orb, num_k):
     return np.ascontiguousarray(x.transpose(2, 1, 3, 0)).reshape(num_k * num_orb * num_orb, ng)
 
 
-def svd_one_sector(raw_q, num_orb, num_k, threshold):
-    """raw_q: one array (closed shell) or a list with one array per spin; returns the compact tensors in the same form."""
+def svd_one_sector(raw_q, num_orb, num_k, threshold, method="svd"):
+    """raw_q: one array (closed shell) or a list with one array per spin; returns the compact tensors in the same form.
+    method "svd": SVD of M. method "gram": eigendecomposition of the Gram matrix M M^+ = U S^2 U^+ (same U and s,
+    without the right singular vectors; much faster when M has many more columns g than rows)."""
     raws = raw_q if isinstance(raw_q, (list, tuple)) else [raw_q]
     M = np.concatenate([sector_matrix(r, num_orb, num_k) for r in raws], axis=0)
-    u, s, _ = np.linalg.svd(M, full_matrices=False)
+    if method == "gram":
+        gram = M @ M.conj().T
+        lam, u = np.linalg.eigh(gram)
+        lam, u = lam[::-1], u[:, ::-1]                    # descending, as the singular values of the SVD
+        s = np.sqrt(np.clip(lam, 0.0, None))
+    else:
+        u, s, _ = np.linalg.svd(M, full_matrices=False)
+        gram = M @ M.conj().T
     kept = s > threshold
     n_kept = int(kept.sum())
     if n_kept == 0:                                       # keep one (zero) column so shapes stay valid
@@ -68,7 +77,6 @@ def svd_one_sector(raw_q, num_orb, num_k, threshold):
     else:
         comp = u[:, kept] * s[kept]                       # U S
         s_min = float(s[kept][-1])
-    gram = M @ M.conj().T
     dgram = gram - comp @ comp.conj().T
     err_rel = float(np.linalg.norm(dgram) / max(np.linalg.norm(gram), 1e-300))
     err_max = float(np.abs(dgram).max())
@@ -78,7 +86,7 @@ def svd_one_sector(raw_q, num_orb, num_k, threshold):
     return (c[0] if len(raws) == 1 else c), float(s[0]), s_min, n_kept, err_rel, err_max, M.shape
 
 
-def compress(h2_path, qlist_path, num_orb, num_k, threshold, n_jobs, h2_down_path=None):
+def compress(h2_path, qlist_path, num_orb, num_k, threshold, n_jobs, h2_down_path=None, method="svd"):
     """Closed shell: returns (H2_zip, sizes). With h2_down_path: returns ([H2_zip_up, H2_zip_down], sizes)."""
     t0 = time()
     raws = []
@@ -101,12 +109,12 @@ def compress(h2_path, qlist_path, num_orb, num_k, threshold, n_jobs, h2_down_pat
     spin = len(raws) == 2
     kmap = build_kmap(load_q_list(qlist_path), num_k)     # validates momentum conservation
     print(f"  ng per q (raw) : {ng_raw}   sectors: {num_k}   kmap checked ({qlist_path})")
-    print(f"\nSVD per momentum sector (threshold={threshold}, n_jobs={n_jobs})")
+    print(f"\nSVD per momentum sector (threshold={threshold}, method={method}, n_jobs={n_jobs})")
     print(f"{'Q':>3} {'matrix':>14} {'kept':>6} {'s_max':>10} {'s_min_kept':>11} {'rel.err(LL+)':>13} {'max.err':>9}")
     with ThreadPoolExecutor(max_workers=max(1, n_jobs)) as pool:
         res = list(pool.map(
             lambda q: svd_one_sector([r[q * ng_raw:(q + 1) * ng_raw] for r in raws] if spin
-                                     else raw[q * ng_raw:(q + 1) * ng_raw], num_orb, num_k, threshold),
+                                     else raw[q * ng_raw:(q + 1) * ng_raw], num_orb, num_k, threshold, method),
             range(num_k)))
     parts, sizes = [], []
     for q, (c, smax, smin, nk_, er, em, shp) in enumerate(res, start=1):
@@ -138,13 +146,16 @@ def main():
     ap.add_argument("--num-k", type=int, required=True)
     ap.add_argument("--threshold", type=float, default=1e-4)
     ap.add_argument("--jobs", type=int, default=1)
+    ap.add_argument("--method", choices=("svd", "gram"), default="svd",
+                    help="svd: SVD of M; gram: eigendecomposition of M M^+ (same vectors, faster for many g)")
     ap.add_argument("--outdir", default=".")
     ap.add_argument("--h2-down", default=None, help="spin-down H2 (spin-unrestricted: joint SVD with --h2)")
     ap.add_argument("--h1-down", default=None, help="spin-down H1")
     a = ap.parse_args()
     if (a.h2_down is None) != (a.h1_down is None):
         sys.exit("ERROR: give both --h2-down and --h1-down, or neither")
-    h2_zip, sizes = compress(a.h2, a.qlist, a.num_orb, a.num_k, a.threshold, a.jobs, h2_down_path=a.h2_down)
+    h2_zip, sizes = compress(a.h2, a.qlist, a.num_orb, a.num_k, a.threshold, a.jobs, h2_down_path=a.h2_down,
+                            method=a.method)
     os.makedirs(a.outdir, exist_ok=True)
     np.save(os.path.join(a.outdir, "Q_sizes.npy"), sizes)
     if a.h2_down is None:
