@@ -96,7 +96,7 @@ def jax_sync(x):
 #  operation counts (complex multiply-adds per call, for all walkers of one rank; compact H2 layout)
 # ---------------------------------------------------------------------------------------------------------------------
 def operation_counts(nk, nb, ne, ng, nmax, nw, order, propagator="S2", nspin=1, force_bias_pq=1.0, refresh=0.0,
-                     energy_biorth=0.0):
+                     energy_biorth=0.0, real=False):
     """Counts for one spin channel (nspin = 2: both channels with the same ne). exp_h1 and taylor are called once
     per channel, so their count per call is that of one channel.
     theta and the overlap of the walkers are formed once per step (propagate/biorthogonalize, one LU of T^T Psi) and
@@ -110,6 +110,10 @@ def operation_counts(nk, nb, ne, ng, nmax, nw, order, propagator="S2", nspin=1, 
     taylor = nw * order * nbk * nbk * nek                          # field (nbk x nbk) times walker, per order
     h1 = nw * nbk * nbk * nek                                     # one exp(-dtau H1/2) (S2: two calls per step)
     exch = nw * nk ** 3 * (nb * ne) ** 2                           # Gram form of the exchange
+    if real:    # Gamma point, real vectors: one product instead of two, real times complex (half a complex flop)
+        pq = nw * nmax * nb * ne / 2
+        aux = nw * nb * nb * nmax / 2
+        exch = exch / 2
     one = nw * nbk * nek
     chol = nw * (2 * nbk * nek ** 2 + 4.0 / 3.0 * nek ** 3)
     qr = nw * (4 * nbk * nek ** 2 - 4.0 / 3.0 * nek ** 3)

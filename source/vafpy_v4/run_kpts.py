@@ -71,6 +71,7 @@ def main():
         backend=backend,
         spin_polarized=bool(afqmc.SPIN),
         num_electron_dn=afqmc.num_electrons_down,
+        real_gamma=afqmc.REALG,
     )
 
     setup = timers.part("setup")
@@ -99,6 +100,12 @@ def main():
     if afqmc.first_cpu:
         print("Hamiltonian set up. H_zero (mean-field constant) =",
               hamiltonian.H_zero)
+        info = getattr(hamiltonian, "real_gamma_info", None)
+        if info is not None:
+            print("Gamma point vectors  = ", "real" if hamiltonian.real_gamma else "complex",
+                  f"(REALG = {afqmc.REALG}; eigenvalue n+1 / largest = {info['imag_ratio']:.2e}"
+                  + (f", asymmetry {info['asym']:.2e}" if "asym" in info else "")
+                  + (f"; {info['reason']}" if "reason" in info else "") + ")")
         print()
 
     e1, eh, ex = new.measure_components(config, trial_det, walkers, hamiltonian)
@@ -237,6 +244,10 @@ def main():
                      f"{afqmc.num_electrons_down if len(config.channels) == 2 else afqmc.num_electrons_up}"), ("NGVEC", afqmc.num_g),
                     ("H2 layout", f"{layout} (file), "
                      f"{'compact' if isinstance(hamiltonian, new.HamiltonianCompact) else 'dense'} (Hamiltonian)"),
+                    ("H2 vectors", (f"real (Gamma point), {hamiltonian.num_fields} fields"
+                                    if getattr(hamiltonian, "real_gamma", False) else
+                                    f"complex, {getattr(hamiltonian, 'num_fields', 2 * afqmc.num_g)} fields")
+                     + f" (REALG = {afqmc.REALG})"),
                     ("walkers per rank", afqmc.NUM_WALKERS), ("walkers in total",
                     afqmc.NUM_WALKERS * config.comm.Get_size()), ("steps", afqmc.NUM_STEPS), ("DTAU", afqmc.D_TAU),
                     ("propagator", f"{afqmc.propagator}, Taylor order {afqmc.order_trunc}"),
@@ -253,9 +264,9 @@ def main():
                              refresh=ncalls("propagate/refresh") / max(ncalls("propagate"), 1),
                              energy_biorth=ncalls("energy/biorthogonalize") / max(ncalls("energy"), 1))
             for ne_c in nes:
-                c = timing.operation_counts(config.num_kpoint, config.num_orbital, ne_c, config.num_g,
+                c = timing.operation_counts(config.num_kpoint, config.num_orbital, ne_c, hamiltonian._ng,
                                             hamiltonian._nmax, config.num_walkers, config.order_propagation,
-                                            config.propagator, **fractions)
+                                            config.propagator, real=hamiltonian.real_gamma, **fractions)
                 counts = c if counts is None else {k: counts[k] + c[k] for k in c}
             # exp_h1 and taylor are timed once per channel: per call, the mean of the channels
             for key in ("propagate/exp_h1", "propagate/taylor"):

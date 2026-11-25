@@ -25,7 +25,24 @@ columns per sector (sum = `NGVEC`). Without it an equal split is assumed.
 
 A dense H2 file is still accepted (layout is detected from the shape) and is
 run with the v2 `Hamiltonian` class, which serves as the reference.
-For `nk = 1` the two layouts coincide and the file is treated as dense.
+For `nk = 1` the two layouts coincide; Gamma-point runs (and spin runs) always use the compact class.
+
+## Real vectors at the Gamma point (`REALG`)
+
+With `KPOINT : 1` and real orbitals, `V = sum_g L_g L_g^+` is real. The same V is then written with real symmetric
+vectors `R_g` (eigendecomposition of the small Gram matrix of `[Re L, Im L]`, nothing truncated beyond the rank of V),
+one real field per g instead of the Hermitian pair `(L+L^+)/2`, `i(L-L^+)/2` of the complex vectors. The force bias,
+the field and the Hartree and exchange contractions become real-times-complex products (about 4x fewer operations
+in the field). The two forms are related by an orthogonal map of the Gaussian fields, so the phaseless propagation
+is the same (`test_real_gamma.py`).
+
+| `REALG` | `KPOINT = 1` | `KPOINT > 1` |
+|---|---|---|
+| `Auto` (default) | real if V is real and the vectors are symmetric, otherwise complex | complex |
+| `On` | real, or stop with an error | error |
+| `Off` | complex | complex |
+
+The output prints the choice (`Gamma point vectors = real ...`) and the timing report the number of fields.
 
 ## Workflow
 

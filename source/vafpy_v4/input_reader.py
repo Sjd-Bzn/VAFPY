@@ -49,6 +49,9 @@ def read(path="vafpy.in"):
     # Backend / precision
     afqmc.Backend = inputs.get("BACKEND", "NumPy")
     afqmc.Precsion = inputs.get("PRECSION", "Double")
+    # Gamma point (KPOINT = 1): Auto uses real vectors (one real field per g) when V is real, On requires it,
+    # Off keeps the complex vectors
+    afqmc.REALG = str(inputs.get("REALG", "Auto"))
 
     # MPI
     afqmc.comm = MPI.COMM_WORLD

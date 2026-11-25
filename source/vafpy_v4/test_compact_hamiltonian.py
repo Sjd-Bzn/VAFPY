@@ -161,6 +161,7 @@ def test_compact_layout_for_single_k_matches_dense():
     """nk=1 supercell: compact (the transposed layout) and dense give the same Hamiltonian."""
     nk, nb, ne, ng = 1, 64, 32, 1769
     config = make_config(3, nk=nk, nb=nb, ne=ne, ng=ng)
+    config.real_gamma = "Off"       # complex vectors, as the dense class (the real ones: test_real_gamma.py)
     h1 = new.obtain_H1(config, os.path.join(SUPER, "H1_svd.npy"))
     dense = np.load(os.path.join(SUPER, "H2_zip.npy")).astype(np.complex128)       # (64, 64, ng)
     compact = np.ascontiguousarray(dense.transpose(1, 0, 2))                        # Lc[b2, b1, g]

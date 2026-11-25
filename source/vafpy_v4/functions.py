@@ -310,6 +310,7 @@ class Configuration:
     backend: Backend
     spin_polarized: bool = False      # False: closed shell, one determinant for both spins
     num_electron_dn: int = None       # electrons per k-point with spin down (spin_polarized only; default num_electron)
+    real_gamma: str = "Auto"          # Gamma point: real vectors if V is real (Auto), always (On) or never (Off)
 
     @property
     def channels(self):
@@ -617,6 +618,97 @@ def make_compact_kernels(be, nk, nb, ne, nmax, ng, kmap, sizes, has_mf, jit=Fals
     return fns
 
 
+def real_gamma_vectors(h2s, num_orb, rel_tol=1e-10, sym_tol=1e-8):
+    """Gamma point: the same V = sum_g L_g L_g^+ written with real symmetric vectors.
+
+    h2s: compact H2 of every spin channel, (nb, nb, n) complex, [b2, b1, g] (one joint set of columns g).
+    With real orbitals V is real, so V = Re(Z) Re(Z)^T + Im(Z) Im(Z)^T for Z = L[(b2,b1), g]: the 2n real columns
+    A = [Re Z, Im Z] span the same n-dimensional space as Z. Their SVD (eigendecomposition of the small Gram
+    matrix A^T A, 2n x 2n) gives n real vectors R with R R^T = A A^T = V; nothing is truncated beyond the rank of V.
+    Returns (list of (nb, nb, n) real arrays per channel, info) or (None, info) if V is not real to rel_tol (the
+    (n+1)-th eigenvalue relative to the largest) or the vectors are not symmetric in (b1, b2) to sym_tol."""
+    nb = num_orb
+    n = h2s[0].shape[2]
+    Z = np.concatenate([np.asarray(h, dtype=np.complex128).reshape(nb * nb, n) for h in h2s], axis=0)
+    A = np.concatenate([Z.real, Z.imag], axis=1)
+    del Z
+    lam, W = np.linalg.eigh(A.T @ A)
+    lam, W = lam[::-1], W[:, ::-1]
+    info = {"n": n, "imag_ratio": float(max(lam[n], 0.0) / lam[0]), "min_kept_ratio": float(lam[n - 1] / lam[0])}
+    if info["imag_ratio"] > rel_tol:
+        info["reason"] = f"V is not real: eigenvalue {n + 1} / largest = {info['imag_ratio']:.2e} > {rel_tol:.0e}"
+        return None, info
+    R = (A @ W[:, :n]).reshape(len(h2s), nb, nb, n)
+    del A
+    asym = np.abs(R - R.transpose(0, 2, 1, 3)).max() / np.abs(R).max()
+    info["asym"] = float(asym)
+    if asym > sym_tol:
+        info["reason"] = f"real vectors not symmetric in (b1, b2): {asym:.2e} > {sym_tol:.0e}"
+        return None, info
+    R = 0.5 * (R + R.transpose(0, 2, 1, 3))
+    return [np.ascontiguousarray(r) for r in R], info
+
+
+def make_real_gamma_kernels(be, nb, ne, ng, has_mf, jit=False):
+    """Gamma point with real symmetric vectors R_g (real_gamma_vectors): the same contractions as
+    make_compact_kernels for nk = 1, but with one real field per g instead of two. For a real symmetric L the
+    pair (L+L^+)/2, i(L-L^+)/2 of the complex kernels is (R, 0), so P = Q, the second half of the force bias is
+    zero and the field is sum_g x_g R_g. Every product is a real matrix times a complex one, done as one real
+    product on the stacked real and imaginary parts.
+
+    M[g, (b2,b1)] real,  G[(b2,ob), (oa,bp)] real Gram of the occupied blocks,  c real mean-field shift (ng, 1)."""
+    occ, ar_ne = np.arange(ne), np.arange(ne)
+
+    def rmul(R, Z):
+        """R (real) @ Z (complex) as one real product."""
+        w = Z.shape[1]
+        Y = be.matmul(R, be.concatenate([Z.real, Z.imag], axis=1))
+        return Y[:, :w] + 1j * Y[:, w:]
+
+    def pq(M, theta):
+        """P[g,w] = sum_{b2,o} R_g[b2,o] theta[w,b2,o]; Q = P for a real symmetric R."""
+        w = theta.shape[0]
+        MP = M.reshape(ng, nb, nb)[:, :, :ne].reshape(ng, nb * ne)
+        P = rmul(MP, theta.reshape(w, nb * ne).T)
+        return P, P
+
+    def force_bias_pq(P, Q, c, cc, theta):
+        if has_mf:
+            S = theta[:, occ, ar_ne].sum(axis=1)
+            P = P - c * S[None, :]
+        return P
+
+    def force_bias(M, c, cc, theta):
+        P, Q = pq(M, theta)
+        return force_bias_pq(P, Q, c, cc, theta)
+
+    def hartree(M, theta):
+        P, Q = pq(M, theta)
+        return 2 * (P * Q).sum(axis=0)
+
+    def aux(M, c, cc, eye, x):
+        """field[w] = sum_g x[g,w] R_g (minus the mean field on the diagonal)."""
+        nw = x.shape[1]
+        field = rmul(M.T, x).reshape(nb, nb, nw).transpose(2, 1, 0)
+        if has_mf:
+            field = field - eye[None, :, :] * (c * x).sum(axis=0)[:, None, None]
+        return field
+
+    def exchange(G, theta):
+        w = theta.shape[0]
+        th1 = theta.reshape(w, nb * ne)                                     # (b2, ob)
+        th2 = theta.transpose(0, 2, 1).reshape(w, ne * nb)                  # (oa, bp)
+        Y = be.matmul(be.concatenate([th1.real, th1.imag], axis=0), G)
+        X = Y[:w] + 1j * Y[w:]
+        return (X * th2).sum(axis=1)
+
+    fns = {"pq": pq, "force_bias": force_bias, "force_bias_pq": force_bias_pq, "hartree": hartree, "aux": aux,
+           "exchange": exchange}
+    if jit:
+        fns = {k: be._jax.jit(f) for k, f in fns.items()}
+    return fns
+
+
 class _Channel:
     """Spin-channel part of the compact Hamiltonian (closed shell: the one channel stands for both spins)."""
 
@@ -681,6 +773,24 @@ class HamiltonianCompact:
                     "sector with only some diagonal blocks: not a regular k-mesh")
         nmax = int(sizes.max())
 
+        # ---- Gamma point: real symmetric vectors (one real field per g) if V is real -------------------------
+        mode = str(getattr(config, "real_gamma", "Auto")).lower()
+        if mode not in ("auto", "on", "off"):
+            raise ValueError(f"REALG = {mode}: use Auto, On or Off")
+        if mode == "on" and nk != 1:
+            raise ValueError(f"REALG = On needs KPOINT = 1 (KPOINT = {nk}: the vectors are complex)")
+        self.real_gamma, self.real_gamma_info = False, None
+        if nk == 1 and mode != "off":
+            tol = 1e-10 if np.dtype(wt) == np.complex128 else 1e-5
+            R, self.real_gamma_info = real_gamma_vectors([be.to_numpy(h2) for _, h2 in raw], nb, rel_tol=tol)
+            if R is not None:
+                raw = [(h1, r) for (h1, _), r in zip(raw, R)]
+                ng = nmax = R[0].shape[2]
+                sizes, off = np.array([ng]), np.array([0, ng])
+                self.real_gamma = True
+            elif mode == "on":
+                raise ValueError(f"REALG = On, but {self.real_gamma_info['reason']}")
+
         for ch, trial, (h1_raw, h2_raw) in zip(chans, trials, raw):
             ne = ch.ne
             nek = ne * nk
@@ -709,7 +819,8 @@ class HamiltonianCompact:
                 B = Lc[occ_rows][:, :, cols].reshape(nek * nb, -1)         # (Kb,ob,bp)
                 Gq = (A @ B.conj().T).reshape(nk, nb, ne, nk, ne, nb)      # K2,b2,oa,Kb,ob,bp
                 G[q] = Gq.transpose(0, 3, 1, 4, 2, 5).reshape(nk, nk, nb * ne, ne * nb)
-            ch.G = be.array(G, dtype=config.complex_type)
+            ch.G = be.array(G.real[0, 0, 0] if self.real_gamma else G,
+                            dtype=config.float_type if self.real_gamma else config.complex_type)
             del G
 
             # ---- occupied diagonal of the mean-field sector(s) and self-interaction of this spin ------------
@@ -735,7 +846,8 @@ class HamiltonianCompact:
                 n = sizes[q]
                 M[q, :n, :] = Lc[:, :, off[q]:off[q + 1]].reshape(nk * nb * nb, n).T
             ch.Lc = Lc
-            ch.M = be.array(M, dtype=config.complex_type)
+            ch.M = be.array(M.real[0], dtype=config.float_type) if self.real_gamma else \
+                be.array(M, dtype=config.complex_type)
             del M
 
         # ---- mean field, shared by the spins ---------------------------------------------------------------
@@ -748,8 +860,10 @@ class HamiltonianCompact:
         c = np.zeros(ng, dtype=wt)
         for q in mf_sectors:
             c[off[q]:off[q + 1]] = avg[off[q]:off[q + 1]] / n_tot
-        self._c = be.array(c[:, None], dtype=config.complex_type)
-        self._c_conj = be.array(c.conj()[:, None], dtype=config.complex_type)
+        ctype = config.float_type if self.real_gamma else config.complex_type
+        self._c = be.array((c.real if self.real_gamma else c)[:, None], dtype=ctype)
+        self._c_conj = be.array((c.real if self.real_gamma else c.conj())[:, None], dtype=ctype)
+        self.num_fields = ng if self.real_gamma else 2 * ng
         self._has_mf = bool(np.any(c != 0))
         self._sqrt_tau = be.sqrt(be.array(config.timestep)).astype(config.float_type)
         for ch in chans:
@@ -766,8 +880,11 @@ class HamiltonianCompact:
             ch.h1 = -h1_total_be * config.timestep
             ch.exp_h1 = be.expm(-h1_total_be * config.timestep)
             ch.exp_h1_half = be.expm(-0.5 * h1_total_be * config.timestep)
-            ch.k = make_compact_kernels(be, nk, nb, ch.ne, nmax, ng, kmap, sizes, self._has_mf,
-                                        jit=hasattr(be, "_jax"))
+            if self.real_gamma:
+                ch.k = make_real_gamma_kernels(be, nb, ch.ne, ng, self._has_mf, jit=hasattr(be, "_jax"))
+            else:
+                ch.k = make_compact_kernels(be, nk, nb, ch.ne, nmax, ng, kmap, sizes, self._has_mf,
+                                            jit=hasattr(be, "_jax"))
             del ch.Lc, ch.h1_host
 
         self._chans = chans
@@ -846,7 +963,7 @@ class HamiltonianCompact:
     def create_random_field(self, config):
         if self.test_random_field is None:
             return config.backend.random_normal(
-                (2 * config.num_g, config.num_walkers), config.float_type)
+                (self.num_fields, config.num_walkers), config.float_type)
         return self.test_random_field
 
     # ------------------------------------------------------------------
